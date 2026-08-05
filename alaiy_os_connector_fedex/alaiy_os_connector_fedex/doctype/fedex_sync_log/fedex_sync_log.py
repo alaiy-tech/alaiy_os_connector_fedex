@@ -4,5 +4,5 @@
 from frappe.model.document import Document
 
 
-class FedexSyncLog(Document):
+class FedExSyncLog(Document):
     pass

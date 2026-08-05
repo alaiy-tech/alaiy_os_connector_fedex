@@ -5,7 +5,7 @@ import frappe
 from frappe.model.document import Document
 
 
-class FedexConnectorSettings(Document):
+class FedExConnectorSettings(Document):
     def validate(self):
         # old_enabled is the last-committed DB value, so this comparison has
         # to run before the save overwrites it. Heavy setup runs only on the
