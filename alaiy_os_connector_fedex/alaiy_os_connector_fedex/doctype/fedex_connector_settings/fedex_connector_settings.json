@@ -1,0 +1,148 @@
+{
+  "creation": "2026-07-20 00:00:00.000000",
+  "docstatus": 0,
+  "doctype": "DocType",
+  "editable_grid": 1,
+  "engine": "InnoDB",
+  "field_order": [
+    "is_enabled",
+    "sb_connection",
+    "fedex_use_sandbox",
+    "fedex_client_id",
+    "fedex_client_secret",
+    "cb_connection",
+    "fedex_access_token",
+    "fedex_token_expires_at",
+    "sb_defaults",
+    "fedex_company",
+    "fedex_default_warehouse",
+    "fedex_account_number",
+    "sb_schedule",
+    "fedex_pull_sync_interval",
+    "fedex_push_sync_interval"
+  ],
+  "fields": [
+    {
+      "default": "0",
+      "fieldname": "is_enabled",
+      "fieldtype": "Check",
+      "label": "Enable FedEx"
+    },
+    {
+      "fieldname": "sb_connection",
+      "fieldtype": "Section Break",
+      "label": "API Connection"
+    },
+    {
+      "default": "1",
+      "description": "Use the FedEx sandbox environment (apis-sandbox.fedex.com) instead of production (apis.fedex.com).",
+      "fieldname": "fedex_use_sandbox",
+      "fieldtype": "Check",
+      "label": "Use Sandbox"
+    },
+    {
+      "description": "API Key (client_id) issued by the FedEx Developer Portal for this project.",
+      "fieldname": "fedex_client_id",
+      "fieldtype": "Data",
+      "in_list_view": 1,
+      "label": "Client ID (API Key)",
+      "reqd": 1
+    },
+    {
+      "description": "Secret Key (client_secret) issued alongside the Client ID. Used as a form field on the /oauth/token exchange -- never sent to any other endpoint.",
+      "fieldname": "fedex_client_secret",
+      "fieldtype": "Password",
+      "label": "Client Secret",
+      "reqd": 1
+    },
+    {
+      "fieldname": "cb_connection",
+      "fieldtype": "Column Break"
+    },
+    {
+      "description": "Cached OAuth2 access token from the last successful client_credentials exchange. Read-only -- refreshed automatically before it expires (FedEx tokens are documented as 1-hour lived).",
+      "fieldname": "fedex_access_token",
+      "fieldtype": "Password",
+      "label": "Access Token (cached)",
+      "read_only": 1
+    },
+    {
+      "fieldname": "fedex_token_expires_at",
+      "fieldtype": "Datetime",
+      "label": "Token Expires At",
+      "read_only": 1
+    },
+    {
+      "fieldname": "sb_defaults",
+      "fieldtype": "Section Break",
+      "label": "Alaiy OS Defaults"
+    },
+    {
+      "description": "Not read by any sync logic yet (shipment/label creation isn't built) -- placeholder for when it is. Not required so auth-only testing isn't blocked on ERPNext-side setup unrelated to FedEx.",
+      "fieldname": "fedex_company",
+      "fieldtype": "Link",
+      "label": "Company",
+      "options": "Company"
+    },
+    {
+      "description": "Default origin/ship-from warehouse for shipments created through this connector. Not read by any sync logic yet.",
+      "fieldname": "fedex_default_warehouse",
+      "fieldtype": "Link",
+      "label": "Default Warehouse",
+      "options": "Warehouse"
+    },
+    {
+      "description": "FedEx account number the shipments/rates are billed to. Required by the real Ship/Rate APIs (requestedShipment.shipper / accountNumber) once those are implemented -- not read yet.",
+      "fieldname": "fedex_account_number",
+      "fieldtype": "Data",
+      "label": "FedEx Account Number"
+    },
+    {
+      "fieldname": "sb_schedule",
+      "fieldtype": "Section Break",
+      "label": "Sync Schedule"
+    },
+    {
+      "default": "Disabled",
+      "description": "How often to automatically run the pull sync (external → Alaiy OS).",
+      "fieldname": "fedex_pull_sync_interval",
+      "fieldtype": "Select",
+      "label": "Pull Sync Interval",
+      "options": "Disabled\n5 min\n15 min\n30 min\n60 min"
+    },
+    {
+      "default": "Disabled",
+      "description": "How often to automatically run the push sync (Alaiy OS → external).",
+      "fieldname": "fedex_push_sync_interval",
+      "fieldtype": "Select",
+      "label": "Push Sync Interval",
+      "options": "Disabled\n5 min\n15 min\n30 min\n60 min",
+      "reqd": 1
+    }
+  ],
+  "is_single": 1,
+  "links": [],
+  "modified": "2026-07-20 00:00:00.000000",
+  "modified_by": "Administrator",
+  "module": "Alaiy Os Connector Fedex",
+  "name": "FedEx Connector Settings",
+  "owner": "Administrator",
+  "permissions": [
+    {
+      "create": 1,
+      "delete": 1,
+      "email": 1,
+      "export": 1,
+      "print": 1,
+      "read": 1,
+      "report": 1,
+      "role": "System Manager",
+      "share": 1,
+      "write": 1
+    }
+  ],
+  "sort_field": "modified",
+  "sort_order": "DESC",
+  "states": [],
+  "track_changes": 0
+}
