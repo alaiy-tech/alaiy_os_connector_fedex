@@ -2,9 +2,9 @@
 # For license information, please see license.txt
 """
 The actual sync work + the FedEx Sync Log lifecycle helpers every sync
-shares. run_pull_sync / run_push_sync are the two example jobs; replace their
-bodies with real logic but keep the log-create → running → success/failed
-bookkeeping so the connector card and Logs list stay accurate.
+shares. run_pull_sync delegates to fedex/tracking.py (the only pull FedEx
+has -- shipment status). run_push_sync is a stub: FedEx's "push" direction
+(creating shipments/labels via the Ship API) isn't implemented yet.
 """
 
 import frappe
@@ -61,19 +61,18 @@ def _run(sync_type, trigger, log_name, worker):
 
 
 def run_pull_sync(trigger="scheduled", log_name=None):
-    """Pull data from the external API into Alaiy OS. TODO: implement."""
-    def worker(log):
-        # from alaiy_os_connector_fedex.fedex.client import FedexClient
-        # client = FedexClient()
-        # data = client.get("...")
-        # ... upsert into ERPNext, updating log counters as you go ...
-        pass
-
-    _run("pull", trigger, log_name, worker)
+    """Poll FedEx shipment status for every tracked Delivery Note."""
+    from alaiy_os_connector_fedex.fedex.tracking import track_pending_deliveries
+    track_pending_deliveries(trigger=trigger, log_name=log_name)
 
 
 def run_push_sync(trigger="scheduled", log_name=None):
-    """Push Alaiy OS data out to the external API. TODO: implement."""
+    """
+    Create shipments/labels via the FedEx Ship API. TODO: implement -- needs
+    the same docs-verification pass tracking.py went through (Ship API
+    request shape, package/dimension requirements, label format) before any
+    real logic gets written here.
+    """
     def worker(log):
         pass
 

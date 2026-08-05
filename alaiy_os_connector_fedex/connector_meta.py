@@ -22,8 +22,8 @@ connector_meta = {
     "sync_categories_method": "alaiy_os_connector_fedex.api.sync.trigger_pull_sync",
     "sync_items_method": "alaiy_os_connector_fedex.api.sync.trigger_push_sync",
     "sync_status_method": "alaiy_os_connector_fedex.api.sync.get_sync_status",
-    "sync_categories_label": "Pull",
-    "sync_items_label": "Push",
+    "sync_categories_label": "Track",
+    "sync_items_label": "Ship (not implemented)",
     "is_enabled": 0,
     "connection_status": "untested",
 }
