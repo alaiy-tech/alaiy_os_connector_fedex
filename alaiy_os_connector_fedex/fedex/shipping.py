@@ -1,29 +1,12 @@
 # Copyright (c) 2026, Alaiy and contributors
 # For license information, please see license.txt
 """
-Shipment creation: create a real FedEx shipment + label for a Delivery
-Note, and write the tracking number / label back onto it.
+Shipment creation and cancellation via FedEx Ship API v1
+(POST /ship/v1/shipments, PUT /ship/v1/shipments/cancel).
 
-Confirmed against fedex/openapi/fedex-ship-api-openapi.yml -- DERIVED, not
-an official portal export (same caveat as rating.py's Rate API doc; see
-that file's header). Field names below are the well-established, stable
-v1 Ship API shape:
-
-  POST /ship/v1/shipments
-  body: {"accountNumber": {"value": "..."}, "labelResponseOptions": "LABEL",
-         "requestedShipment": {
-           "shipper": {...}, "recipients": [{...}],
-           "pickupType": "...", "serviceType": "...", "packagingType": "...",
-           "shippingChargesPayment": {"paymentType": "SENDER"},
-           "labelSpecification": {"imageType": "PDF", "labelStockType": "PAPER_85X11_TOP_HALF_LABEL"},
-           "requestedPackageLineItems": [{"weight": {...}}]
-         }}
-  -> {"output": {"transactionShipments": [{"masterTrackingNumber": "...",
-        "pieceResponses": [{"packageDocuments": [{"encodedLabel": "<base64>"}]}]}]}}
-
-Read defensively (permissive schema) -- the real per-piece response shape
-isn't confirmed against an official spec. Cancellation uses
-PUT /ship/v1/shipments/cancel with {"accountNumber", "trackingNumber"}.
+Schema reference: fedex/openapi/fedex-ship-api-openapi.yml. Same
+permissive-schema caveat as rating.py -- no downloadable spec published
+for this API.
 """
 
 import base64
@@ -37,9 +20,8 @@ from alaiy_os_connector_fedex.fedex.rating import _erpnext_address_to_fedex, _we
 SHIPMENTS_PATH = "/ship/v1/shipments"
 CANCEL_PATH = "/ship/v1/shipments/cancel"
 
-# Real FedEx v1 label stock/image conventions -- PDF on a standard
-# half-page thermal-compatible stock is the most broadly usable default;
-# a site with a real thermal printer can override via Settings later.
+# Default label format: PDF on standard half-page stock, usable without a
+# thermal printer. Override via Settings for sites that have one.
 _DEFAULT_LABEL_IMAGE_TYPE = "PDF"
 _DEFAULT_LABEL_STOCK_TYPE = "PAPER_85X11_TOP_HALF_LABEL"
 
@@ -56,12 +38,12 @@ def create_shipment(
     shipper, recipient, service_type, weight_value, weight_units="LB",
     packaging_type="YOUR_PACKAGING", dimensions=None, reference=None,
 ):
-    """
+    """Creates a shipment and returns its label.
+
     shipper / recipient: dict with contact_name, phone, company_name,
     address_line, city, state, postal_code, country_code.
-    Returns {"tracking_number", "label_bytes", "label_content_type"}.
-    Raises FedexAPIError on a real FedEx-side failure -- never returns a
-    half-created shipment silently.
+    Returns {tracking_number, label_bytes, label_content_type}.
+    Raises FedexAPIError on any FedEx-side failure.
     """
     account_number, _settings = _account_number()
 
@@ -154,14 +136,10 @@ def cancel_shipment(tracking_number):
 
 @frappe.whitelist()
 def create_shipment_for_delivery_note(delivery_note, service_type):
-    """
-    Whitelisted entry point for a "Create FedEx Shipment" button on a
-    Delivery Note. Resolves shipper/recipient/weight from real ERPNext
-    data (same helpers rating.py's button uses), creates the shipment,
-    writes the tracking number back, and attaches the label as a real
-    File on the DN -- so the label is never only sitting in memory on a
-    request that could fail to save.
-    """
+    """Entry point for a "Create FedEx Shipment" button on a Delivery
+    Note. Resolves shipper/recipient/weight from ERPNext data, creates
+    the shipment, and writes the tracking number and label back onto
+    the DN."""
     dn = frappe.get_doc("Delivery Note", delivery_note)
     if dn.fedex_tracking_number:
         frappe.throw(

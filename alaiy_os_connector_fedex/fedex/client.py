@@ -36,23 +36,19 @@ GRANT_TYPE = "client_credentials"
 # flight never gets caught using a token that expires mid-request.
 _TOKEN_REFRESH_MARGIN_SECONDS = 120
 
-# FedEx's own documented convention (fedex/rate-limits/fedex-rate-limits.yml):
-# 429 on throttle, Retry-After header present, real limits are negotiated
-# per contract with no public default -- so this is a real, honored signal,
-# not a guessed backoff.
+# Retry policy per fedex/rate-limits/fedex-rate-limits.yml: 429 on
+# throttle, Retry-After header present.
 _RETRYABLE_STATUS = (429, 500, 502, 503, 504)
 _MAX_RETRIES = 3
 _DEFAULT_RETRY_AFTER_SECONDS = 2
 
 
 class FedexAPIError(Exception):
-    """Raised with FedEx's own error code/message intact, not just requests'
-    generic HTTPError text. FedEx's error body shape (confirmed across
-    every FedEx v1 API, not one specific endpoint):
+    """FedEx API error with the response's own error code/message
+    preserved. Error body shape, consistent across all v1 APIs:
       {"errors": [{"code": "...", "message": "..."}], ...}
-    retryable is True for anything this client already retried and still
-    failed on (429/5xx) -- surfaced so a caller can decide whether to queue
-    a re-attempt later instead of treating it as a permanent failure."""
+    retryable=True means every retry attempt was exhausted on a 429/5xx.
+    """
 
     def __init__(self, message, status_code=None, fedex_errors=None, retryable=False):
         super().__init__(message)
@@ -130,13 +126,9 @@ class FedexClient:
     # -- Requests ----------------------------------------------------------
 
     def _request(self, method, path, params=None, json=None, timeout=30):
-        """Shared by get/post -- retries on 429/5xx honoring FedEx's own
-        Retry-After header (confirmed convention, see
-        fedex/rate-limits/fedex-rate-limits.yml), and on every terminal
-        failure raises FedexAPIError with FedEx's real error code/message
-        intact instead of requests' generic 'HTTPError: 400 Client Error'
-        text -- the actual reason (invalid address, missing account number,
-        etc.) lives in the response body, not the status line."""
+        """Shared by get/post. Retries on 429/5xx honoring Retry-After.
+        Raises FedexAPIError with the response body's error code/message
+        on terminal failure."""
         url = f"{self.base_url}/{path.lstrip('/')}"
         last_resp = None
         for attempt in range(_MAX_RETRIES + 1):

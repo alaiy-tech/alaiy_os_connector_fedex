@@ -1,26 +1,11 @@
 # Copyright (c) 2026, Alaiy and contributors
 # For license information, please see license.txt
 """
-Rate quotes: given a shipment's weight/dimensions and shipper/recipient
-addresses, get FedEx's real rate options and transit times.
+Rate quotes via FedEx Rate API v1 (POST /rate/v1/rates/quotes).
 
-Confirmed against fedex/openapi/fedex-rate-api-openapi.yml -- DERIVED, not
-an official portal export (FedEx's Rate docs page has no downloadable
-spec without portal login; see that file's header for the full caveat).
-Field names below are the well-established, stable v1 Rate API shape,
-
-  POST /rate/v1/rates/quotes
-  body: {"accountNumber": {"value": "..."},
-         "requestedShipment": {
-           "shipper": {...}, "recipient": {...},
-           "pickupType": "...", "rateRequestType": ["LIST","ACCOUNT"],
-           "requestedPackageLineItems": [{"weight": {"value": ..., "units": "LB"}}]
-         }}
-  -> {"output": {"rateReplyDetails": [{"serviceType": "...", "commit": {...},
-        "ratedShipmentDetails": [{"totalNetCharge": {"amount": ..., "currency": "..."}}]}]}}
-
-Read defensively (permissive schema, same posture as tracking.py) -- the
-real per-service response shape isn't confirmed against an official spec.
+Schema reference: fedex/openapi/fedex-rate-api-openapi.yml. FedEx has not
+published a downloadable spec for this API; the schema is derived from
+the stable v1 request/response shape and treated as permissive on parse.
 """
 
 import frappe
@@ -55,18 +40,17 @@ def get_rate_quotes(
     shipper_address, recipient_address, weight_value, weight_units="LB",
     service_type=None, dimensions=None, rate_request_type=None,
 ):
-    """
-    shipper_address / recipient_address: dict with keys address_line, city,
+    """Returns available FedEx service quotes for a single package.
+
+    shipper_address / recipient_address: dict with address_line, city,
     state, postal_code, country_code.
     dimensions: optional dict with length/width/height/units.
-    service_type: omit for every eligible service (LIST rate request), or
-    pass a real FedEx service code (e.g. "FEDEX_GROUND") to restrict.
+    service_type: omit to request every eligible service; pass a FedEx
+    service code (e.g. "FEDEX_GROUND") to restrict to one.
 
-    Returns a list of {"service_type", "transit_days", "total_net_charge",
-    "currency"} dicts, cheapest-agnostic order (whatever FedEx returns).
-    Raises FedexAPIError on a real FedEx-side failure (bad address, missing
-    account number, etc.) -- caller decides whether that's user-facing or
-    loggable, this doesn't swallow it.
+    Returns a list of {service_type, transit_days, total_net_charge,
+    currency} in FedEx's own response order. Raises FedexAPIError on any
+    FedEx-side failure (invalid address, missing account number, etc.).
     """
     client = FedexClient()
     settings = frappe.get_single("FedEx Connector Settings")
@@ -96,10 +80,8 @@ def get_rate_quotes(
 
 
 def _parse_rate_reply(resp):
-    """Permissive parse -- see module docstring. A rate detail with no
-    ratedShipmentDetails at all is skipped rather than raising, since a
-    partial rate reply (some services quoted, others not) is a real,
-    documented possibility, not necessarily an error."""
+    """Skips any rateReplyDetails entry with no ratedShipmentDetails
+    (a partial reply is valid, not an error)."""
     results = []
     for detail in (resp.get("output") or {}).get("rateReplyDetails") or []:
         rated = detail.get("ratedShipmentDetails") or []
@@ -118,13 +100,9 @@ def _parse_rate_reply(resp):
 
 @frappe.whitelist()
 def get_rate_quotes_for_delivery_note(delivery_note):
-    """
-    Whitelisted entry point for a "Get FedEx Rates" button on a Delivery
-    Note -- resolves shipper (fedex_default_warehouse / Company address)
-    and recipient (the DN's own shipping address) from real ERPNext data,
-    and the package weight from the DN's total_net_weight, rather than
-    requiring the fields to be re-entered by hand.
-    """
+    """Entry point for a "Get FedEx Rates" button on a Delivery Note.
+    Resolves shipper (Default Warehouse address), recipient (DN shipping
+    address), and weight (DN total_net_weight) from ERPNext data."""
     dn = frappe.get_doc("Delivery Note", delivery_note)
     settings = frappe.get_single("FedEx Connector Settings")
 
@@ -150,9 +128,8 @@ def get_rate_quotes_for_delivery_note(delivery_note):
 
 
 def _weight_uom_to_fedex(weight_uom):
-    """FedEx only accepts LB or KG -- ERPNext's Weight UOM can be any real
-    unit (Gram, Ounce, Ton, ...). Map the common ones, fail loud on
-    anything else rather than silently mis-rating a shipment."""
+    """Maps an ERPNext Weight UOM to FedEx's LB/KG enum. Raises on any
+    other unit instead of silently mis-rating the shipment."""
     normalized = (weight_uom or "").strip().lower()
     if normalized in ("kg", "kilogram", "kilograms"):
         return "KG"
