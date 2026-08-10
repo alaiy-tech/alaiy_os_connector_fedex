@@ -113,10 +113,11 @@ def get_rate_quotes_for_delivery_note(delivery_note):
     dn = frappe.get_doc("Delivery Note", delivery_note)
     settings = frappe.get_single("FedEx Connector Settings")
 
-    shipper_addr_name = settings.fedex_default_warehouse
-    if not shipper_addr_name:
+    warehouse_name = settings.fedex_default_warehouse
+    if not warehouse_name:
         frappe.throw("Set a Default Warehouse on FedEx Connector Settings before getting rates.")
-    shipper = _erpnext_address_to_fedex(shipper_addr_name)
+    shipper = _warehouse_to_fedex(warehouse_name, dn.company)
+    shipper["company_name"] = settings.fedex_company or ""
 
     recipient_addr_name = dn.shipping_address_name or dn.customer_address
     if not recipient_addr_name:
@@ -156,4 +157,32 @@ def _erpnext_address_to_fedex(address_name):
         "state": addr.state,
         "postal_code": addr.pincode,
         "country_code": frappe.db.get_value("Country", addr.country, "code") or "",
+    }
+
+
+def _warehouse_to_fedex(warehouse_name, company):
+    """
+    FedEx Connector Settings.fedex_default_warehouse is a Link to Warehouse,
+    not Address -- confirmed live: passing it into _erpnext_address_to_fedex
+    raised "Address <warehouse name> not found" outright. Warehouse carries
+    its own flat address fields (address_line_1/2, city, state, pin,
+    phone_no) rather than a linked Address, and has no country field of its
+    own -- falls back to the Company's country, since a warehouse's country
+    is never going to differ from the company operating it in practice.
+    """
+    wh = frappe.get_doc("Warehouse", warehouse_name)
+    if not (wh.address_line_1 and wh.city and wh.pin):
+        frappe.throw(
+            f"Warehouse {warehouse_name} has no address set (address_line_1/city/pin) -- "
+            "fill in the Warehouse's address before using it as the FedEx shipper."
+        )
+    country = frappe.get_cached_value("Company", company, "country")
+    return {
+        "contact_name": wh.warehouse_name,
+        "phone": wh.phone_no or "",
+        "address_line": wh.address_line_1,
+        "city": wh.city,
+        "state": wh.state or "",
+        "postal_code": wh.pin,
+        "country_code": frappe.db.get_value("Country", country, "code") or "" if country else "",
     }
