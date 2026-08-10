@@ -127,7 +127,10 @@ def get_rate_quotes_for_delivery_note(delivery_note):
     weight = dn.total_net_weight or 0
     if not weight:
         frappe.throw(f"{dn.name} has no total net weight set -- required for a real rate quote.")
-    weight_units = _weight_uom_to_fedex(dn.weight_uom)
+    # weight_uom lives per line item on Delivery Note, not on the DN header
+    # itself (same real gap as shipping.py's create_shipment_for_delivery_note).
+    item_weight_uom = next((row.weight_uom for row in dn.items if row.weight_uom), None)
+    weight_units = _weight_uom_to_fedex(item_weight_uom)
 
     try:
         return get_rate_quotes(shipper, recipient, weight_value=weight, weight_units=weight_units)

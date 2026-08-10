@@ -164,7 +164,14 @@ def create_shipment_for_delivery_note(delivery_note, service_type):
     weight = dn.total_net_weight or 0
     if not weight:
         frappe.throw(f"{dn.name} has no total net weight set -- required to create a shipment.")
-    weight_units = _weight_uom_to_fedex(dn.weight_uom)
+    # weight_uom lives per line item on Delivery Note, not on the DN header
+    # itself -- confirmed live ('DeliveryNote' object has no attribute
+    # 'weight_uom'). Takes the first row's unit; ERPNext core's own
+    # total_net_weight rollup already sums rows without converting between
+    # units, so a DN mixing weight UOMs across rows is an existing ERPNext
+    # limitation, not something to solve here.
+    item_weight_uom = next((row.weight_uom for row in dn.items if row.weight_uom), None)
+    weight_units = _weight_uom_to_fedex(item_weight_uom)
 
     try:
         result = create_shipment(
