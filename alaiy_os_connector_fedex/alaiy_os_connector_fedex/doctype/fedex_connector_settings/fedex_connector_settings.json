@@ -16,6 +16,7 @@
     "sb_defaults",
     "fedex_company",
     "fedex_default_warehouse",
+    "fedex_shipper_country",
     "fedex_account_number",
     "sb_schedule",
     "fedex_pull_sync_interval",
@@ -90,6 +91,13 @@
       "fieldtype": "Link",
       "label": "Default Warehouse",
       "options": "Warehouse"
+    },
+    {
+      "description": "Country of the Default Warehouse's real ship-from address. Warehouse has no country field of its own on this ERPNext version -- required so shipments don't silently default to the Company's registered country, which can differ from where the warehouse actually ships from.",
+      "fieldname": "fedex_shipper_country",
+      "fieldtype": "Link",
+      "label": "Shipper Country",
+      "options": "Country"
     },
     {
       "description": "FedEx account number the shipments/rates are billed to. Required by the real Ship/Rate APIs (requestedShipment.shipper / accountNumber) once those are implemented -- not read yet.",

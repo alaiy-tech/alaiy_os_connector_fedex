@@ -171,8 +171,14 @@ def _warehouse_to_fedex(warehouse_name, company):
     raised "Address <warehouse name> not found" outright. Warehouse carries
     its own flat address fields (address_line_1/2, city, state, pin,
     phone_no) rather than a linked Address, and has no country field of its
-    own -- falls back to the Company's country, since a warehouse's country
-    is never going to differ from the company operating it in practice.
+    own.
+
+    Country resolution: prefers Settings.fedex_shipper_country. Falls back
+    to the Company's registered country only when that's unset -- confirmed
+    live that blindly using the Company's country is wrong whenever the
+    warehouse actually ships from elsewhere (FedEx rejected the request:
+    "ORIGIN.COUNTRY.NOTSERVED" when a Company registered in one country was
+    used as the ship-from for a warehouse address physically in another).
     """
     wh = frappe.get_doc("Warehouse", warehouse_name)
     if not (wh.address_line_1 and wh.city and wh.pin):
@@ -180,7 +186,10 @@ def _warehouse_to_fedex(warehouse_name, company):
             f"Warehouse {warehouse_name} has no address set (address_line_1/city/pin) -- "
             "fill in the Warehouse's address before using it as the FedEx shipper."
         )
-    country = frappe.get_cached_value("Company", company, "country")
+    country = (
+        frappe.db.get_single_value("FedEx Connector Settings", "fedex_shipper_country")
+        or frappe.get_cached_value("Company", company, "country")
+    )
     return {
         "contact_name": wh.warehouse_name,
         "phone": wh.phone_no or "",
