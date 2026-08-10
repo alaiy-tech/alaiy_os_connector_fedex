@@ -1,5 +1,5 @@
 {
-  "autoname": "TPL-SYNC-.YYYY.-.MM.-.DD.-.######",
+  "autoname": "FDX-SYNC-.YYYY.-.MM.-.DD.-.######",
   "creation": "2026-07-20 00:00:00.000000",
   "docstatus": 0,
   "doctype": "DocType",
@@ -26,7 +26,7 @@
       "fieldtype": "Select",
       "in_list_view": 1,
       "label": "Sync Type",
-      "options": "pull\npush"
+      "options": "pull\npush\ntrack_pull"
     },
     {
       "fieldname": "trigger",
@@ -103,8 +103,8 @@
   "links": [],
   "modified": "2026-07-20 00:00:00.000000",
   "modified_by": "Administrator",
-  "module": "Alaiy Os Connector Template",
-  "name": "Template Sync Log",
+  "module": "Alaiy Os Connector Fedex",
+  "name": "FedEx Sync Log",
   "owner": "Administrator",
   "permissions": [
     {

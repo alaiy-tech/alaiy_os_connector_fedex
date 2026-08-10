@@ -1,10 +1,10 @@
 # Copyright (c) 2026, Alaiy and contributors
 # For license information, please see license.txt
 """
-The actual sync work + the Template Sync Log lifecycle helpers every sync
-shares. run_pull_sync / run_push_sync are the two example jobs; replace their
-bodies with real logic but keep the log-create → running → success/failed
-bookkeeping so the connector card and Logs list stay accurate.
+The actual sync work + the FedEx Sync Log lifecycle helpers every sync
+shares. run_pull_sync delegates to fedex/tracking.py (the only pull FedEx
+has -- shipment status). run_push_sync is a stub: FedEx's "push" direction
+(creating shipments/labels via the Ship API) isn't implemented yet.
 """
 
 import frappe
@@ -17,10 +17,10 @@ def get_or_create_log(sync_type, trigger, log_name=None):
     layer pre-created it so it shows as 'queued' immediately) reuse it;
     otherwise create a fresh one. Newly created logs start as 'queued'.
     """
-    if log_name and frappe.db.exists("Template Sync Log", log_name):
-        return frappe.get_doc("Template Sync Log", log_name)
+    if log_name and frappe.db.exists("FedEx Sync Log", log_name):
+        return frappe.get_doc("FedEx Sync Log", log_name)
 
-    log = frappe.new_doc("Template Sync Log")
+    log = frappe.new_doc("FedEx Sync Log")
     log.sync_type = sync_type
     log.trigger = trigger
     log.status = "queued"
@@ -54,26 +54,25 @@ def _run(sync_type, trigger, log_name, worker):
     except Exception:
         _mark_finished(log, "failed", frappe.get_traceback())
         frappe.log_error(
-            title=f"Template connector: {sync_type} sync failed",
+            title=f"FedEx connector: {sync_type} sync failed",
             message=frappe.get_traceback(),
         )
         raise
 
 
 def run_pull_sync(trigger="scheduled", log_name=None):
-    """Pull data from the external API into Alaiy OS. TODO: implement."""
-    def worker(log):
-        # from alaiy_os_connector_template.template.client import TemplateClient
-        # client = TemplateClient()
-        # data = client.get("...")
-        # ... upsert into ERPNext, updating log counters as you go ...
-        pass
-
-    _run("pull", trigger, log_name, worker)
+    """Poll FedEx shipment status for every tracked Delivery Note."""
+    from alaiy_os_connector_fedex.fedex.tracking import track_pending_deliveries
+    track_pending_deliveries(trigger=trigger, log_name=log_name)
 
 
 def run_push_sync(trigger="scheduled", log_name=None):
-    """Push Alaiy OS data out to the external API. TODO: implement."""
+    """
+    Create shipments/labels via the FedEx Ship API. TODO: implement -- needs
+    the same docs-verification pass tracking.py went through (Ship API
+    request shape, package/dimension requirements, label format) before any
+    real logic gets written here.
+    """
     def worker(log):
         pass
 

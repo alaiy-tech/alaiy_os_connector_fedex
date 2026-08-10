@@ -25,7 +25,10 @@ def after_install():
     'Failed to decrypt key' error on first load.
     """
     frappe.db.set_single_value(
-        "Template Connector Settings", "template_api_token", ""
+        "FedEx Connector Settings", "fedex_client_secret", ""
+    )
+    frappe.db.set_single_value(
+        "FedEx Connector Settings", "fedex_access_token", ""
     )
     frappe.db.commit()
 
@@ -40,7 +43,7 @@ def sync_connector_registry():
     if not frappe.db.exists("DocType", "OS Connector Registry"):
         return
 
-    from alaiy_os_connector_template.connector_meta import connector_meta
+    from alaiy_os_connector_fedex.connector_meta import connector_meta
 
     connector_id = connector_meta["connector_id"]
 
@@ -85,7 +88,7 @@ def _update_alaiy_os_sidebar():
         frappe.db.commit()
     except Exception:
         frappe.log_error(
-            title="Template connector: sidebar update failed",
+            title="FedEx connector: sidebar update failed",
             message=frappe.get_traceback(),
         )
 
@@ -98,7 +101,7 @@ def _fix_settings_as_single():
     """
     frappe.db.sql(
         "UPDATE `tabDocType` SET issingle=1 "
-        "WHERE name='Template Connector Settings' AND issingle=0"
+        "WHERE name='FedEx Connector Settings' AND issingle=0"
     )
     frappe.db.commit()
 
@@ -108,30 +111,42 @@ def _fix_settings_as_single():
 # ---------------------------------------------------------------------------
 def setup_custom_fields():
     """
-    Add this connector's custom fields to ERPNext doctypes. Idempotent — safe
-    to call on every enable/migrate. Replace the examples below with the
-    external-id / flag fields your connector actually needs.
+    Add this connector's custom fields to ERPNext doctypes. Idempotent —
+    safe to call on every enable/migrate.
+
+    FedEx has no per-Item concept (it's a carrier, not a marketplace) --
+    the only thing worth tagging is which Delivery Note a shipment's
+    tracking number belongs to, so shipment status can be pulled back onto
+    it. fedex_tracking_number is entered manually for now (Ship API /
+    label generation isn't built yet, so nothing auto-populates it).
     """
-    item_fields = [
+    delivery_note_fields = [
         {
-            "fieldname": "template_external_id",
-            "label": "Template External ID",
+            "fieldname": "fedex_tracking_number",
+            "label": "FedEx Tracking Number",
             "fieldtype": "Data",
             "search_index": 1,
-            "insert_after": "item_code",
+            "insert_after": "title",
+            "description": "Enter the FedEx tracking number to pull live shipment status onto this Delivery Note.",
         },
         {
-            "fieldname": "sync_to_template",
-            "label": "Sync to Template",
-            "fieldtype": "Check",
-            "default": "0",
+            "fieldname": "fedex_delivery_status",
+            "label": "FedEx Delivery Status",
+            "fieldtype": "Data",
+            "read_only": 1,
             "in_list_view": 1,
-            "insert_after": "disabled",
-            "description": "Include this Item in Template syncs.",
+            "insert_after": "fedex_tracking_number",
+        },
+        {
+            "fieldname": "fedex_last_tracked_at",
+            "label": "FedEx Last Tracked At",
+            "fieldtype": "Datetime",
+            "read_only": 1,
+            "insert_after": "fedex_delivery_status",
         },
     ]
 
-    _ensure_custom_fields("Item", item_fields)
+    _ensure_custom_fields("Delivery Note", delivery_note_fields)
     frappe.db.commit()
 
 
@@ -155,7 +170,7 @@ def _ensure_custom_fields(doctype, fields):
         cf.in_list_view = 1 if f.get("in_list_view") else 0
         cf.default = f.get("default")
         cf.description = f.get("description", "")
-        cf.module = "Alaiy Os Connector Template"
+        cf.module = "Alaiy Os Connector Fedex"
         cf.insert(ignore_permissions=True)
 
 
