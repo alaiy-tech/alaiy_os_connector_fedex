@@ -163,3 +163,13 @@ On **Delivery Note**:
   caught earlier.
 - No UI entry point for `cancel_shipment` yet.
 - No Pickup API integration — `pickupType` is always drop-off.
+- **No push of the generated tracking number to Shopify.** The Shopify
+  connector (`alaiy_os_connector_shopify`) syncs fulfillment tracking
+  numbers in the *inbound* direction only — Shopify's own tracking data
+  into Alaiy OS. It has no matching outbound path to push a tracking
+  number generated here (via `fedex_tracking_number`) back onto the
+  corresponding Shopify order's fulfillment. A caller wanting the
+  Shopify order marked shipped/tracked after calling
+  `create_shipment_for_delivery_note` needs to write that push
+  separately — nothing in this connector or the Shopify connector does
+  it today.

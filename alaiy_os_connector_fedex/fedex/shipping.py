@@ -15,7 +15,7 @@ import frappe
 from frappe.utils.file_manager import save_file
 
 from alaiy_os_connector_fedex.fedex.client import FedexClient, FedexAPIError
-from alaiy_os_connector_fedex.fedex.rating import _erpnext_address_to_fedex, _weight_uom_to_fedex
+from alaiy_os_connector_fedex.fedex.rating import _erpnext_address_to_fedex, _warehouse_to_fedex, _weight_uom_to_fedex
 
 SHIPMENTS_PATH = "/ship/v1/shipments"
 CANCEL_PATH = "/ship/v1/shipments/cancel"
@@ -148,10 +148,10 @@ def create_shipment_for_delivery_note(delivery_note, service_type):
         )
 
     settings = frappe.get_single("FedEx Connector Settings")
-    shipper_addr_name = settings.fedex_default_warehouse
-    if not shipper_addr_name:
+    warehouse_name = settings.fedex_default_warehouse
+    if not warehouse_name:
         frappe.throw("Set a Default Warehouse on FedEx Connector Settings before creating a shipment.")
-    shipper = _erpnext_address_to_fedex(shipper_addr_name)
+    shipper = _warehouse_to_fedex(warehouse_name, dn.company)
     shipper["company_name"] = settings.fedex_company or ""
 
     recipient_addr_name = dn.shipping_address_name or dn.customer_address
@@ -164,7 +164,14 @@ def create_shipment_for_delivery_note(delivery_note, service_type):
     weight = dn.total_net_weight or 0
     if not weight:
         frappe.throw(f"{dn.name} has no total net weight set -- required to create a shipment.")
-    weight_units = _weight_uom_to_fedex(dn.weight_uom)
+    # weight_uom lives per line item on Delivery Note, not on the DN header
+    # itself -- confirmed live ('DeliveryNote' object has no attribute
+    # 'weight_uom'). Takes the first row's unit; ERPNext core's own
+    # total_net_weight rollup already sums rows without converting between
+    # units, so a DN mixing weight UOMs across rows is an existing ERPNext
+    # limitation, not something to solve here.
+    item_weight_uom = next((row.weight_uom for row in dn.items if row.weight_uom), None)
+    weight_units = _weight_uom_to_fedex(item_weight_uom)
 
     try:
         result = create_shipment(
@@ -186,4 +193,28 @@ def create_shipment_for_delivery_note(delivery_note, service_type):
         frappe.db.set_value("Delivery Note", dn.name, "fedex_label", file_doc.file_url)
 
     frappe.db.commit()
+
+    _push_tracking_to_shopify(dn.name, result["tracking_number"])
+
     return {"tracking_number": result["tracking_number"]}
+
+
+def _push_tracking_to_shopify(delivery_note, tracking_number):
+    """
+    Best-effort push -- the FedEx shipment and its tracking number are
+    already saved locally by this point, so a Shopify-side failure here
+    (order not linked to Shopify, connector not installed, API error) must
+    not roll back or fail the shipment creation that already succeeded.
+    """
+    if "alaiy_os_connector_shopify" not in frappe.get_installed_apps():
+        return
+    try:
+        frappe.call(
+            "alaiy_os_connector_shopify.shopify.order.fulfillment_push.push_fulfillment_for_delivery_note",
+            delivery_note=delivery_note, tracking_number=tracking_number, carrier="FedEx",
+        )
+    except Exception:
+        frappe.log_error(
+            title=f"FedEx: Shopify fulfillment push failed for {delivery_note}",
+            message=frappe.get_traceback(),
+        )
