@@ -87,13 +87,20 @@ def _parse_rate_reply(resp):
         rated = detail.get("ratedShipmentDetails") or []
         if not rated:
             continue
-        charge = (rated[0].get("totalNetCharge") or {})
+        # Live sandbox response confirmed totalNetCharge is a plain number,
+        # not the nested {amount, currency} dict the derived spec assumed.
+        # Handle both shapes.
+        charge = rated[0].get("totalNetCharge")
+        if isinstance(charge, dict):
+            amount, currency = charge.get("amount"), charge.get("currency")
+        else:
+            amount, currency = charge, rated[0].get("currency")
         commit = detail.get("commit") or {}
         results.append({
             "service_type": detail.get("serviceType"),
             "transit_days": commit.get("transitDays") or commit.get("commitMessageDetails"),
-            "total_net_charge": charge.get("amount"),
-            "currency": charge.get("currency"),
+            "total_net_charge": amount,
+            "currency": currency,
         })
     return results
 
