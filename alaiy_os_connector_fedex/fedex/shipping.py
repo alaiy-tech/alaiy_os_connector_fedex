@@ -186,4 +186,28 @@ def create_shipment_for_delivery_note(delivery_note, service_type):
         frappe.db.set_value("Delivery Note", dn.name, "fedex_label", file_doc.file_url)
 
     frappe.db.commit()
+
+    _push_tracking_to_shopify(dn.name, result["tracking_number"])
+
     return {"tracking_number": result["tracking_number"]}
+
+
+def _push_tracking_to_shopify(delivery_note, tracking_number):
+    """
+    Best-effort push -- the FedEx shipment and its tracking number are
+    already saved locally by this point, so a Shopify-side failure here
+    (order not linked to Shopify, connector not installed, API error) must
+    not roll back or fail the shipment creation that already succeeded.
+    """
+    if "alaiy_os_connector_shopify" not in frappe.get_installed_apps():
+        return
+    try:
+        frappe.call(
+            "alaiy_os_connector_shopify.shopify.order.fulfillment_push.push_fulfillment_for_delivery_note",
+            delivery_note=delivery_note, tracking_number=tracking_number, carrier="FedEx",
+        )
+    except Exception:
+        frappe.log_error(
+            title=f"FedEx: Shopify fulfillment push failed for {delivery_note}",
+            message=frappe.get_traceback(),
+        )
