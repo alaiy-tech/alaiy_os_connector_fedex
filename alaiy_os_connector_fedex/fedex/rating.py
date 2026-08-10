@@ -155,6 +155,7 @@ def _weight_uom_to_fedex(weight_uom):
 def _erpnext_address_to_fedex(address_name):
     addr = frappe.get_doc("Address", address_name)
     return {
+        "phone": addr.phone or "",
         "address_line": addr.address_line1,
         "city": addr.city,
         "state": addr.state,
