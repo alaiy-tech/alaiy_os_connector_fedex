@@ -3,8 +3,14 @@
 """
 The actual sync work + the FedEx Sync Log lifecycle helpers every sync
 shares. run_pull_sync delegates to fedex/tracking.py (the only pull FedEx
-has -- shipment status). run_push_sync is a stub: FedEx's "push" direction
-(creating shipments/labels via the Ship API) isn't implemented yet.
+has -- shipment status).
+
+FedEx's "push" direction (creating shipments/labels via the Ship API) is
+an on-demand, per-Delivery-Note action, not a batch sync -- there's
+nothing to poll or push on a schedule (see fedex/shipping.py's
+create_shipment_for_delivery_note, called from a DN button, not from
+here). run_push_sync stays a no-op stub for the scheduler wiring alaiy_os
+expects every connector to have, not because Ship is unimplemented.
 """
 
 import frappe
