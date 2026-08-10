@@ -22,19 +22,17 @@ def test_connection():
 
     import requests
 
-    from alaiy_os_connector_fedex.fedex.client import FedexClient
+    from alaiy_os_connector_fedex.fedex.client import FedexClient, FedexAPIError
 
     try:
         client = FedexClient()
         client.get_access_token()
         env = "sandbox" if doc.fedex_use_sandbox else "production"
         return {"success": True, "message": f"Connected successfully ({env})."}
-    except requests.exceptions.HTTPError as e:
-        status = e.response.status_code if e.response is not None else None
-        if status == 401:
+    except FedexAPIError as e:
+        if e.status_code == 401:
             return {"success": False, "message": "Authentication failed — check your Client ID / Client Secret."}
-        body = e.response.text[:200] if e.response is not None else str(e)
-        return {"success": False, "message": f"HTTP {status}: {body}"}
+        return {"success": False, "message": f"HTTP {e.status_code}: {e}"}
     except requests.exceptions.ConnectionError:
         return {"success": False, "message": "Could not connect to the FedEx API."}
     except requests.exceptions.Timeout:
