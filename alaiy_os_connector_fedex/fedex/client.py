@@ -20,6 +20,8 @@ Settings (fedex_access_token / fedex_token_expires_at), refreshed once
 close to expiry rather than per request.
 """
 
+import time
+
 import frappe
 import requests
 from frappe.utils import add_to_date, now_datetime, get_datetime
@@ -33,6 +35,34 @@ GRANT_TYPE = "client_credentials"
 # Refresh this many seconds before the token's real expiry, so a call in
 # flight never gets caught using a token that expires mid-request.
 _TOKEN_REFRESH_MARGIN_SECONDS = 120
+
+# Retry policy per fedex/rate-limits/fedex-rate-limits.yml: 429 on
+# throttle, Retry-After header present.
+_RETRYABLE_STATUS = (429, 500, 502, 503, 504)
+_MAX_RETRIES = 3
+_DEFAULT_RETRY_AFTER_SECONDS = 2
+
+
+class FedexAPIError(Exception):
+    """FedEx API error with the response's own error code/message
+    preserved. Error body shape, consistent across all v1 APIs:
+      {"errors": [{"code": "...", "message": "..."}], ...}
+    retryable=True means every retry attempt was exhausted on a 429/5xx.
+    """
+
+    def __init__(self, message, status_code=None, fedex_errors=None, retryable=False):
+        super().__init__(message)
+        self.status_code = status_code
+        self.fedex_errors = fedex_errors or []
+        self.retryable = retryable
+
+
+def _parse_fedex_errors(resp):
+    try:
+        body = resp.json()
+    except ValueError:
+        return []
+    return body.get("errors") or []
 
 
 class FedexClient:
@@ -71,7 +101,12 @@ class FedexClient:
             headers={"Content-Type": "application/x-www-form-urlencoded"},
             timeout=30,
         )
-        resp.raise_for_status()
+        if resp.status_code >= 400:
+            fedex_errors = _parse_fedex_errors(resp)
+            message = "; ".join(
+                f"{e.get('code', '?')}: {e.get('message', '')}" for e in fedex_errors
+            ) or f"FedEx OAuth token request returned {resp.status_code}"
+            raise FedexAPIError(message, status_code=resp.status_code, fedex_errors=fedex_errors)
         data = resp.json()
         token = data["access_token"]
         expires_in = int(data.get("expires_in") or 0)
@@ -90,22 +125,40 @@ class FedexClient:
 
     # -- Requests ----------------------------------------------------------
 
-    def get(self, path, params=None, timeout=30):
-        resp = requests.get(
-            f"{self.base_url}/{path.lstrip('/')}",
-            headers=self._headers(),
-            params=params,
-            timeout=timeout,
+    def _request(self, method, path, params=None, json=None, timeout=30):
+        """Shared by get/post. Retries on 429/5xx honoring Retry-After.
+        Raises FedexAPIError with the response body's error code/message
+        on terminal failure."""
+        url = f"{self.base_url}/{path.lstrip('/')}"
+        last_resp = None
+        for attempt in range(_MAX_RETRIES + 1):
+            resp = requests.request(
+                method, url, headers=self._headers(), params=params, json=json, timeout=timeout,
+            )
+            if resp.status_code < 400:
+                return resp.json()
+
+            last_resp = resp
+            if resp.status_code not in _RETRYABLE_STATUS or attempt == _MAX_RETRIES:
+                break
+
+            retry_after = resp.headers.get("Retry-After")
+            wait = float(retry_after) if retry_after and retry_after.isdigit() else _DEFAULT_RETRY_AFTER_SECONDS
+            time.sleep(wait * (attempt + 1))
+
+        fedex_errors = _parse_fedex_errors(last_resp)
+        message = "; ".join(
+            f"{e.get('code', '?')}: {e.get('message', '')}" for e in fedex_errors
+        ) or f"FedEx API returned {last_resp.status_code} with no parseable error body"
+        raise FedexAPIError(
+            message,
+            status_code=last_resp.status_code,
+            fedex_errors=fedex_errors,
+            retryable=last_resp.status_code in _RETRYABLE_STATUS,
         )
-        resp.raise_for_status()
-        return resp.json()
+
+    def get(self, path, params=None, timeout=30):
+        return self._request("GET", path, params=params, timeout=timeout)
 
     def post(self, path, json=None, timeout=30):
-        resp = requests.post(
-            f"{self.base_url}/{path.lstrip('/')}",
-            headers=self._headers(),
-            json=json,
-            timeout=timeout,
-        )
-        resp.raise_for_status()
-        return resp.json()
+        return self._request("POST", path, json=json, timeout=timeout)

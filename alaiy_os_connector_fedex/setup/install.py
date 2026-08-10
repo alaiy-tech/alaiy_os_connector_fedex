@@ -117,8 +117,10 @@ def setup_custom_fields():
     FedEx has no per-Item concept (it's a carrier, not a marketplace) --
     the only thing worth tagging is which Delivery Note a shipment's
     tracking number belongs to, so shipment status can be pulled back onto
-    it. fedex_tracking_number is entered manually for now (Ship API /
-    label generation isn't built yet, so nothing auto-populates it).
+    it. fedex_tracking_number is either entered manually, or set
+    automatically by fedex/shipping.py's create_shipment_for_delivery_note
+    when a shipment is created via the Ship API (which also attaches the
+    real label into fedex_label).
     """
     delivery_note_fields = [
         {
@@ -143,6 +145,14 @@ def setup_custom_fields():
             "fieldtype": "Datetime",
             "read_only": 1,
             "insert_after": "fedex_delivery_status",
+        },
+        {
+            "fieldname": "fedex_label",
+            "label": "FedEx Label",
+            "fieldtype": "Attach",
+            "read_only": 1,
+            "insert_after": "fedex_last_tracked_at",
+            "description": "Set automatically when a shipment is created via the Ship API.",
         },
     ]
 
