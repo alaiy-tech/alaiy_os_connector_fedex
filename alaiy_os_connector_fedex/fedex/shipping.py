@@ -219,6 +219,15 @@ def create_tag(shipper, recipient, service_type, weight_value, weight_units="LB"
         "imageType": _DEFAULT_LABEL_IMAGE_TYPE,
         "labelStockType": _DEFAULT_LABEL_STOCK_TYPE,
     }
+    # A tag is a courier pickup by definition, not a drop-off -- confirmed
+    # live that the shared DROPOFF_AT_FEDEX_LOCATION default trips
+    # READY.DATE.INVALID because FedEx expects a real pickup window here.
+    now = frappe.utils.now_datetime()
+    requested_shipment["pickupType"] = "CONTACT_FEDEX_TO_SCHEDULE"
+    requested_shipment["pickupDetail"] = {
+        "readyPickupDateTime": frappe.utils.add_to_date(now, hours=1).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "latestPickupDateTime": frappe.utils.add_to_date(now, hours=6).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
     # A call-tag is a return shipment by definition. The special-service
     # flag lives under shipmentSpecialServices (not top-level), and needs
     # returnShipmentDetail.returnType alongside it -- confirmed against a
