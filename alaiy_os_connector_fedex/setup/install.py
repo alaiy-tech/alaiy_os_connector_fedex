@@ -154,6 +154,43 @@ def setup_custom_fields():
             "insert_after": "fedex_last_tracked_at",
             "description": "Set automatically when a shipment is created via the Ship API.",
         },
+        {
+            "fieldname": "fedex_tag_tracking_number",
+            "label": "FedEx Return Tag Tracking Number",
+            "fieldtype": "Data",
+            "read_only": 1,
+            "insert_after": "fedex_label",
+            "description": "Set automatically when a return tag is created via the Ship API. Used as the shipment id when cancelling the tag.",
+        },
+        {
+            "fieldname": "fedex_tag_confirmation_number",
+            "label": "FedEx Return Tag Confirmation Number",
+            "fieldtype": "Data",
+            "read_only": 1,
+            "insert_after": "fedex_tag_tracking_number",
+            "description": "Set automatically when a return tag is created via the Ship API. Cleared once the tag is cancelled.",
+        },
+        {
+            "fieldname": "fedex_tag_service_type",
+            "label": "FedEx Return Tag Service Type",
+            "fieldtype": "Data",
+            "read_only": 1,
+            "insert_after": "fedex_tag_confirmation_number",
+        },
+        {
+            "fieldname": "fedex_tag_dispatch_date",
+            "label": "FedEx Return Tag Dispatch Date",
+            "fieldtype": "Date",
+            "read_only": 1,
+            "insert_after": "fedex_tag_service_type",
+        },
+        {
+            "fieldname": "fedex_tag_location",
+            "label": "FedEx Return Tag Location",
+            "fieldtype": "Data",
+            "read_only": 1,
+            "insert_after": "fedex_tag_dispatch_date",
+        },
     ]
 
     _ensure_custom_fields("Delivery Note", delivery_note_fields)
