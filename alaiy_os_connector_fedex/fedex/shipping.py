@@ -47,9 +47,17 @@ def _account_number():
     return account_number, settings
 
 
-def _package_line_item(weight_value, weight_units, dimensions=None, reference=None):
+def _package_line_item(weight_value, weight_units, dimensions=None, reference=None, description=None):
     dims = dimensions or {}
-    item = {"weight": {"value": weight_value, "units": weight_units}}
+    item = {
+        "weight": {"value": weight_value, "units": weight_units},
+        # Confirmed live: FedEx rejects Create Tag with
+        # REQUESTEDPACKAGELINEITEMS.ITEMDESCRIPTION.REQUIRED without this --
+        # create_shipment/validate_shipment happened to not hit it, but a
+        # description is real input, not decoration; default to something
+        # generic rather than making every caller pass one.
+        "itemDescription": (description or "Merchandise")[:35],
+    }
     if dims.get("length") and dims.get("width") and dims.get("height"):
         item["dimensions"] = {
             "length": dims["length"], "width": dims["width"], "height": dims["height"],
@@ -205,12 +213,15 @@ def create_tag(shipper, recipient, service_type, weight_value, weight_units="LB"
     operation listing. Returns {confirmation_number, tracking_number,
     dispatch_date, raw}."""
     account_number, _settings = _account_number()
-    package_item = _package_line_item(weight_value, weight_units, dimensions)
+    package_item = _package_line_item(weight_value, weight_units, dimensions, description="Return item")
     requested_shipment = _requested_shipment(shipper, recipient, service_type, package_item, packaging_type)
     requested_shipment["labelSpecification"] = {
         "imageType": _DEFAULT_LABEL_IMAGE_TYPE,
         "labelStockType": _DEFAULT_LABEL_STOCK_TYPE,
     }
+    # A call-tag is a return shipment by definition -- confirmed live that
+    # omitting this trips SHIPMENT.SPECIALSERVICETYPE.NOTALLOWED.
+    requested_shipment["specialServiceTypes"] = ["RETURN_SHIPMENT"]
     if dispatch_date:
         requested_shipment["shipDatestamp"] = dispatch_date
 
