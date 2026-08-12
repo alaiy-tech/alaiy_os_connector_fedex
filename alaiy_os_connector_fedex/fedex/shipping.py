@@ -219,9 +219,21 @@ def create_tag(shipper, recipient, service_type, weight_value, weight_units="LB"
         "imageType": _DEFAULT_LABEL_IMAGE_TYPE,
         "labelStockType": _DEFAULT_LABEL_STOCK_TYPE,
     }
-    # A call-tag is a return shipment by definition -- confirmed live that
-    # omitting this trips SHIPMENT.SPECIALSERVICETYPE.NOTALLOWED.
-    requested_shipment["specialServiceTypes"] = ["RETURN_SHIPMENT"]
+    # A call-tag is a return shipment by definition. The special-service
+    # flag lives under shipmentSpecialServices (not top-level), and needs
+    # returnShipmentDetail.returnType alongside it -- confirmed against a
+    # real Create Tag request example, not the flat shape that tripped
+    # SHIPMENT.SPECIALSERVICETYPE.NOTALLOWED.
+    requested_shipment["shipmentSpecialServices"] = {
+        "specialServiceTypes": ["RETURN_SHIPMENT"],
+        "returnShipmentDetail": {"returnType": "FEDEX_TAG"},
+    }
+    # Confirmed against the same example: the responsible-party account
+    # number is repeated inside shippingChargesPayment.payor for a tag,
+    # not just at the request's top level.
+    requested_shipment["shippingChargesPayment"]["payor"] = {
+        "responsibleParty": {"accountNumber": {"value": account_number}}
+    }
     if dispatch_date:
         requested_shipment["shipDatestamp"] = dispatch_date
 
