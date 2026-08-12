@@ -222,12 +222,13 @@ def _warehouse_to_fedex(warehouse_name, company):
         frappe.db.get_single_value("FedEx Connector Settings", "fedex_shipper_country")
         or frappe.get_cached_value("Company", company, "country")
     )
+    country_code = frappe.db.get_value("Country", country, "code") or "" if country else ""
     return {
         "contact_name": wh.warehouse_name,
         "phone": wh.phone_no or "",
         "address_line": wh.address_line_1,
         "city": wh.city,
-        "state": wh.state or "",
+        "state": _state_to_fedex_code(wh.state, country_code),
         "postal_code": wh.pin,
-        "country_code": frappe.db.get_value("Country", country, "code") or "" if country else "",
+        "country_code": country_code,
     }
