@@ -114,6 +114,14 @@ def validate_shipment(
     account_number, _settings = _account_number()
     package_item = _package_line_item(weight_value, weight_units, dimensions)
     requested_shipment = _requested_shipment(shipper, recipient, service_type, package_item, packaging_type)
+    # Confirmed live: required even for a dry-run with no label ever
+    # generated, contrary to fedex.md's "same as Create minus
+    # processingOptions/requestType" summary -- FedEx rejected the request
+    # with REQUESTEDSHIPMENT.LABELSPECIFICATION.REQUIRED without it.
+    requested_shipment["labelSpecification"] = {
+        "imageType": _DEFAULT_LABEL_IMAGE_TYPE,
+        "labelStockType": _DEFAULT_LABEL_STOCK_TYPE,
+    }
 
     body = {
         "accountNumber": {"value": account_number},
