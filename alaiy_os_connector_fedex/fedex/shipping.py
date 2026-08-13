@@ -15,7 +15,9 @@ import frappe
 from frappe.utils.file_manager import save_file
 
 from alaiy_os_connector_fedex.fedex.client import FedexClient, FedexAPIError
-from alaiy_os_connector_fedex.fedex.rating import _erpnext_address_to_fedex, _warehouse_to_fedex, _weight_uom_to_fedex
+from alaiy_os_connector_fedex.fedex.rating import (
+    _erpnext_address_to_fedex, _resolve_shipper_warehouse, _warehouse_to_fedex, _weight_uom_to_fedex,
+)
 
 SHIPMENTS_PATH = "/ship/v1/shipments"
 CANCEL_PATH = "/ship/v1/shipments/cancel"
@@ -204,9 +206,7 @@ def create_shipment_for_delivery_note(delivery_note, service_type):
         )
 
     settings = frappe.get_single("FedEx Connector Settings")
-    warehouse_name = settings.fedex_default_warehouse
-    if not warehouse_name:
-        frappe.throw("Set a Default Warehouse on FedEx Connector Settings before creating a shipment.")
+    warehouse_name = _resolve_shipper_warehouse(dn, settings)
     shipper = _warehouse_to_fedex(warehouse_name, dn.company)
     shipper["company_name"] = settings.fedex_company or ""
 

@@ -113,9 +113,7 @@ def get_rate_quotes_for_delivery_note(delivery_note):
     dn = frappe.get_doc("Delivery Note", delivery_note)
     settings = frappe.get_single("FedEx Connector Settings")
 
-    warehouse_name = settings.fedex_default_warehouse
-    if not warehouse_name:
-        frappe.throw("Set a Default Warehouse on FedEx Connector Settings before getting rates.")
+    warehouse_name = _resolve_shipper_warehouse(dn, settings)
     shipper = _warehouse_to_fedex(warehouse_name, dn.company)
     shipper["company_name"] = settings.fedex_company or ""
 
@@ -162,6 +160,42 @@ def _erpnext_address_to_fedex(address_name):
         "postal_code": addr.pincode,
         "country_code": frappe.db.get_value("Country", addr.country, "code") or "",
     }
+
+
+def _resolve_shipper_warehouse(dn, settings):
+    """
+    Generic across both a single-warehouse site (altomoda) and a
+    many-suppliers-many-warehouses site (thesolist, dropship model) --
+    each supplier already gets their own Warehouse there, named after the
+    supplier (see alaiy_os_thesolist's own _get_supplier_warehouse
+    convention), so the DN's own item warehouse IS the real per-order
+    shipper once one exists.
+
+    Prefers the DN's own item warehouse(s) -- if every item ships from the
+    same one, that's unambiguously the real shipper for THIS order, more
+    correct than a single site-wide default. Falls back to
+    Settings.fedex_default_warehouse only when the DN's items don't
+    disambiguate (blank warehouse, e.g. an older/manually-built DN).
+    Throws rather than guessing if a DN's items genuinely span more than
+    one warehouse -- same posture as Unicommerce's own
+    _get_facility_code, which throws on "Multiple facility codes found in
+    a single order" instead of picking one arbitrarily.
+    """
+    warehouses = {row.warehouse for row in dn.items if row.warehouse}
+    if len(warehouses) > 1:
+        frappe.throw(
+            f"{dn.name} has items from multiple warehouses ({', '.join(sorted(warehouses))}) -- "
+            "FedEx needs one shipper per shipment. Split this into separate Delivery Notes per warehouse."
+        )
+    if warehouses:
+        return next(iter(warehouses))
+
+    if not settings.fedex_default_warehouse:
+        frappe.throw(
+            f"{dn.name}'s items have no warehouse set, and no Default Warehouse is "
+            "configured on FedEx Connector Settings -- nothing to resolve the shipper from."
+        )
+    return settings.fedex_default_warehouse
 
 
 def _warehouse_to_fedex(warehouse_name, company):
