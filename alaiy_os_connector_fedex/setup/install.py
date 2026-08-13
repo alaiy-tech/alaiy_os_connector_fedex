@@ -6,10 +6,10 @@ Install / migrate plumbing shared by every Alaiy OS connector:
   after_install            -> one-time cleanup on `bench install-app`
   sync_connector_registry  -> (re)register in OS Connector Registry (every migrate)
 
-Heavy setup (custom fields, price lists, ...) intentionally does NOT run on
-migrate. It runs once, lazily, the first time the connector is enabled from
-its settings form (see the doctype controller's _run_setup()), so installing
-the app is cheap and non-destructive until an admin opts in.
+setup_custom_fields runs unconditionally on every migrate (same pattern as
+alaiy_os_connector_shopify's sync_connector_registry) so a fresh install +
+migrate is enough on its own -- no separate "enable first" step required
+before the Delivery Note custom fields exist.
 """
 
 import json
@@ -39,6 +39,7 @@ def sync_connector_registry():
     Called from hooks.py -> after_migrate on every bench migrate. Idempotent.
     """
     _fix_settings_as_single()
+    setup_custom_fields()
 
     if not frappe.db.exists("DocType", "OS Connector Registry"):
         return
@@ -106,9 +107,6 @@ def _fix_settings_as_single():
     frappe.db.commit()
 
 
-# ---------------------------------------------------------------------------
-# First-enable setup (called from the settings controller, not on migrate)
-# ---------------------------------------------------------------------------
 def setup_custom_fields():
     """
     Add this connector's custom fields to ERPNext doctypes. Idempotent —
@@ -153,6 +151,43 @@ def setup_custom_fields():
             "read_only": 1,
             "insert_after": "fedex_last_tracked_at",
             "description": "Set automatically when a shipment is created via the Ship API.",
+        },
+        {
+            "fieldname": "fedex_tag_tracking_number",
+            "label": "FedEx Return Tag Tracking Number",
+            "fieldtype": "Data",
+            "read_only": 1,
+            "insert_after": "fedex_label",
+            "description": "Set automatically when a return tag is created via the Ship API. Used as the shipment id when cancelling the tag.",
+        },
+        {
+            "fieldname": "fedex_tag_confirmation_number",
+            "label": "FedEx Return Tag Confirmation Number",
+            "fieldtype": "Data",
+            "read_only": 1,
+            "insert_after": "fedex_tag_tracking_number",
+            "description": "Set automatically when a return tag is created via the Ship API. Cleared once the tag is cancelled.",
+        },
+        {
+            "fieldname": "fedex_tag_service_type",
+            "label": "FedEx Return Tag Service Type",
+            "fieldtype": "Data",
+            "read_only": 1,
+            "insert_after": "fedex_tag_confirmation_number",
+        },
+        {
+            "fieldname": "fedex_tag_dispatch_date",
+            "label": "FedEx Return Tag Dispatch Date",
+            "fieldtype": "Date",
+            "read_only": 1,
+            "insert_after": "fedex_tag_service_type",
+        },
+        {
+            "fieldname": "fedex_tag_location",
+            "label": "FedEx Return Tag Location",
+            "fieldtype": "Data",
+            "read_only": 1,
+            "insert_after": "fedex_tag_dispatch_date",
         },
     ]
 

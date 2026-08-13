@@ -24,6 +24,14 @@ CANCEL_PATH = "/ship/v1/shipments/cancel"
 # ShipmentPackageValidate.php) -- not in the permissive local spec this
 # module's docstring already flags as incomplete.
 VALIDATE_PATH = "/ship/v1/shipments/packages/validate"
+# Create/Cancel Tag and Retrieve Async Ship confirmed against the real
+# FedEx Ship API operation listing + docs (developer.fedex.com/api/en-us/
+# catalog/ship/docs.html) -- not guessed. Cancel Tag is PUT with the
+# shipment id in the path AND the confirmation number in the body (FedEx
+# uses both to disambiguate a tag from its parent shipment).
+CREATE_TAG_PATH = "/ship/v1/shipments/tag"
+CANCEL_TAG_PATH = "/ship/v1/shipments/tag/cancel/{shipmentid}"
+RETRIEVE_ASYNC_PATH = "/ship/v1/shipments/results"
 
 # Default label format: PDF on standard half-page stock, usable without a
 # thermal printer. Override via Settings for sites that have one.
@@ -39,9 +47,17 @@ def _account_number():
     return account_number, settings
 
 
-def _package_line_item(weight_value, weight_units, dimensions=None, reference=None):
+def _package_line_item(weight_value, weight_units, dimensions=None, reference=None, description=None):
     dims = dimensions or {}
-    item = {"weight": {"value": weight_value, "units": weight_units}}
+    item = {
+        "weight": {"value": weight_value, "units": weight_units},
+        # Confirmed live: FedEx rejects Create Tag with
+        # REQUESTEDPACKAGELINEITEMS.ITEMDESCRIPTION.REQUIRED without this --
+        # create_shipment/validate_shipment happened to not hit it, but a
+        # description is real input, not decoration; default to something
+        # generic rather than making every caller pass one.
+        "itemDescription": (description or "Merchandise")[:35],
+    }
     if dims.get("length") and dims.get("width") and dims.get("height"):
         item["dimensions"] = {
             "length": dims["length"], "width": dims["width"], "height": dims["height"],
@@ -190,6 +206,99 @@ def cancel_shipment(tracking_number):
     })
 
 
+def create_tag(shipper, recipient, service_type, weight_value, weight_units="LB",
+                packaging_type="YOUR_PACKAGING", dimensions=None, dispatch_date=None):
+    """Return label (call-tag): same requestedShipment shape as
+    create_shipment, endpoint confirmed against FedEx's real Ship API
+    operation listing. Returns {confirmation_number, tracking_number,
+    dispatch_date, raw}."""
+    account_number, _settings = _account_number()
+    package_item = _package_line_item(weight_value, weight_units, dimensions, description="Return item")
+    requested_shipment = _requested_shipment(shipper, recipient, service_type, package_item, packaging_type)
+    requested_shipment["labelSpecification"] = {
+        "imageType": _DEFAULT_LABEL_IMAGE_TYPE,
+        "labelStockType": _DEFAULT_LABEL_STOCK_TYPE,
+    }
+    # A tag is a courier pickup by definition, not a drop-off -- confirmed
+    # live that the shared DROPOFF_AT_FEDEX_LOCATION default trips
+    # READY.DATE.INVALID because FedEx expects a real pickup window here.
+    now = frappe.utils.now_datetime()
+    requested_shipment["pickupType"] = "CONTACT_FEDEX_TO_SCHEDULE"
+    requested_shipment["pickupDetail"] = {
+        "readyPickupDateTime": frappe.utils.add_to_date(now, hours=1).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "latestPickupDateTime": frappe.utils.add_to_date(now, hours=6).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+    # A call-tag is a return shipment by definition. The special-service
+    # flag lives under shipmentSpecialServices (not top-level), and needs
+    # returnShipmentDetail.returnType alongside it -- confirmed against a
+    # real Create Tag request example, not the flat shape that tripped
+    # SHIPMENT.SPECIALSERVICETYPE.NOTALLOWED.
+    requested_shipment["shipmentSpecialServices"] = {
+        "specialServiceTypes": ["RETURN_SHIPMENT"],
+        "returnShipmentDetail": {"returnType": "FEDEX_TAG"},
+    }
+    # Confirmed against the same example: the responsible-party account
+    # number is repeated inside shippingChargesPayment.payor for a tag,
+    # not just at the request's top level.
+    requested_shipment["shippingChargesPayment"]["payor"] = {
+        "responsibleParty": {"accountNumber": {"value": account_number}}
+    }
+    if dispatch_date:
+        requested_shipment["shipDatestamp"] = dispatch_date
+
+    body = {
+        "accountNumber": {"value": account_number},
+        "labelResponseOptions": "LABEL",
+        "requestedShipment": requested_shipment,
+    }
+
+    client = FedexClient()
+    resp = client.post(CREATE_TAG_PATH, json=body)
+    shipment = ((resp.get("output") or {}).get("transactionShipments") or [{}])[0]
+    return {
+        "confirmation_number": shipment.get("confirmationNumber"),
+        "tracking_number": shipment.get("masterTrackingNumber"),
+        "dispatch_date": (shipment.get("pickupDetail") or {}).get("dispatchDate") or dispatch_date,
+        "raw": resp.get("output"),
+    }
+
+
+def cancel_tag(shipment_id, confirmation_number, service_type, dispatch_date, location):
+    """Cancel a return tag before courier dispatch. shipment_id goes in the
+    URL path, confirmation_number/service_type/dispatch_date/location in the
+    body -- both required per FedEx's confirmed Cancel Tag spec."""
+    account_number, _settings = _account_number()
+    client = FedexClient()
+    resp = client.put(CANCEL_TAG_PATH.format(shipmentid=shipment_id), json={
+        "accountNumber": {"value": account_number},
+        "serviceType": service_type,
+        "confirmationNumber": confirmation_number,
+        "dispatchDate": dispatch_date,
+        "location": location,
+    })
+    output = resp.get("output") or {}
+    return {"cancelled": bool(output.get("cancelledTag")), "message": output.get("message"), "raw": output}
+
+
+def retrieve_async_ship(job_id):
+    """Poll an asynchronously-processed shipment (used when a shipment
+    exceeds the ~40-package synchronous limit) for its result. Returns the
+    same shape as _parse_shipment_response once the job is COMPLETED, or
+    raises FedexAPIError if the job itself failed -- callers should treat a
+    still-PENDING job as "poll again later", not an error."""
+    account_number, _settings = _account_number()
+    client = FedexClient()
+    resp = client.post(RETRIEVE_ASYNC_PATH, json={
+        "jobId": job_id,
+        "accountNumber": {"value": account_number},
+    })
+    output = resp.get("output") or {}
+    status = output.get("processingStatus") or output.get("jobStatus")
+    if status and status != "COMPLETED":
+        return {"status": status, "raw": output}
+    return {"status": "COMPLETED", **_parse_shipment_response(resp), "raw": output}
+
+
 @frappe.whitelist()
 def create_shipment_for_delivery_note(delivery_note, service_type):
     """Entry point for a "Create FedEx Shipment" button on a Delivery
@@ -197,6 +306,20 @@ def create_shipment_for_delivery_note(delivery_note, service_type):
     the shipment, and writes the tracking number and label back onto
     the DN."""
     dn = frappe.get_doc("Delivery Note", delivery_note)
+    try:
+        dn.lock()
+    except frappe.DocumentLockedError:
+        frappe.throw(
+            f"{dn.name} already has a FedEx shipment request in progress -- "
+            "wait for it to finish before retrying (prevents a duplicate label on double-click/retry)."
+        )
+    try:
+        return _create_shipment_for_delivery_note_locked(dn, service_type)
+    finally:
+        dn.unlock()
+
+
+def _create_shipment_for_delivery_note_locked(dn, service_type):
     if dn.fedex_tracking_number:
         frappe.throw(
             f"{dn.name} already has a FedEx tracking number ({dn.fedex_tracking_number}) -- "
@@ -253,6 +376,83 @@ def create_shipment_for_delivery_note(delivery_note, service_type):
     _push_tracking_to_shopify(dn.name, result["tracking_number"])
 
     return {"tracking_number": result["tracking_number"]}
+
+
+@frappe.whitelist()
+def create_tag_for_delivery_note(delivery_note, service_type, dispatch_date=None):
+    """Issue a return label (call-tag) for a Delivery Note -- for Alaiy's
+    returns flow, mirrors create_shipment_for_delivery_note's
+    shipper/recipient/weight resolution."""
+    dn = frappe.get_doc("Delivery Note", delivery_note)
+    if dn.fedex_tag_confirmation_number:
+        frappe.throw(f"{dn.name} already has an open FedEx return tag ({dn.fedex_tag_confirmation_number}).")
+
+    settings = frappe.get_single("FedEx Connector Settings")
+    warehouse_name = settings.fedex_default_warehouse
+    if not warehouse_name:
+        frappe.throw("Set a Default Warehouse on FedEx Connector Settings before creating a return tag.")
+    # A return tag ships FROM the customer back TO the warehouse -- shipper/
+    # recipient are swapped relative to create_shipment_for_delivery_note.
+    recipient = _warehouse_to_fedex(warehouse_name, dn.company)
+    recipient["company_name"] = settings.fedex_company or ""
+
+    shipper_addr_name = dn.shipping_address_name or dn.customer_address
+    if not shipper_addr_name:
+        frappe.throw(f"{dn.name} has no address to collect the return from.")
+    shipper = _erpnext_address_to_fedex(shipper_addr_name)
+    shipper["contact_name"] = dn.contact_person or dn.customer_name or ""
+    shipper["company_name"] = dn.customer_name or ""
+
+    weight = dn.total_net_weight or 0
+    if not weight:
+        frappe.throw(f"{dn.name} has no total net weight set -- required to create a return tag.")
+    item_weight_uom = next((row.weight_uom for row in dn.items if row.weight_uom), None)
+    weight_units = _weight_uom_to_fedex(item_weight_uom)
+
+    try:
+        result = create_tag(
+            shipper, recipient, service_type, weight_value=weight, weight_units=weight_units,
+            dispatch_date=dispatch_date,
+        )
+    except FedexAPIError as e:
+        frappe.throw(f"FedEx return tag creation failed: {e}")
+
+    frappe.db.set_value("Delivery Note", dn.name, {
+        "fedex_tag_tracking_number": result["tracking_number"],
+        "fedex_tag_confirmation_number": result["confirmation_number"],
+        "fedex_tag_service_type": service_type,
+        "fedex_tag_dispatch_date": result["dispatch_date"],
+        "fedex_tag_location": (result["raw"] or {}).get("pickupDetail", {}).get("location", ""),
+    })
+    frappe.db.commit()
+
+    return result
+
+
+@frappe.whitelist()
+def cancel_tag_for_delivery_note(delivery_note):
+    """Cancel a return tag issued for a Delivery Note before FedEx
+    dispatches the courier -- requires the tag's confirmation number/
+    service type/dispatch date/location, stored when the tag was created."""
+    dn = frappe.get_doc("Delivery Note", delivery_note)
+    if not dn.fedex_tag_confirmation_number:
+        frappe.throw(f"{dn.name} has no FedEx return tag to cancel.")
+    try:
+        result = cancel_tag(
+            shipment_id=dn.fedex_tag_tracking_number,
+            confirmation_number=dn.fedex_tag_confirmation_number,
+            service_type=dn.fedex_tag_service_type,
+            dispatch_date=dn.fedex_tag_dispatch_date,
+            location=dn.fedex_tag_location,
+        )
+    except FedexAPIError as e:
+        frappe.throw(f"FedEx tag cancellation failed: {e}")
+    if result["cancelled"]:
+        frappe.db.set_value("Delivery Note", dn.name, {
+            "fedex_tag_tracking_number": "",
+            "fedex_tag_confirmation_number": "",
+        })
+    return result
 
 
 def _push_tracking_to_shopify(delivery_note, tracking_number):

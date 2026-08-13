@@ -154,14 +154,46 @@ def _weight_uom_to_fedex(weight_uom):
 
 def _erpnext_address_to_fedex(address_name):
     addr = frappe.get_doc("Address", address_name)
+    country_code = frappe.db.get_value("Country", addr.country, "code") or ""
     return {
         "phone": addr.phone or "",
         "address_line": addr.address_line1,
         "city": addr.city,
-        "state": addr.state,
+        "state": _state_to_fedex_code(addr.state, country_code),
         "postal_code": addr.pincode,
-        "country_code": frappe.db.get_value("Country", addr.country, "code") or "",
+        "country_code": country_code,
     }
+
+
+def _state_to_fedex_code(state, country_code):
+    """FedEx's stateOrProvinceCode is a 2-letter code, but ERPNext's Address
+    doctype stores whatever free-text state name a Country's state list
+    uses (e.g. "Tennessee") -- confirmed live via SHIPPER.STATEORPROVINCECODE.
+    INVALID when passed through unconverted. Only US is mapped since that's
+    the confirmed failure case; other countries pass through unchanged
+    (FedEx's ISO-3166-2 state/province requirement is mostly a US/CA/MX
+    concern per fedex.md's Postal Code Validation notes)."""
+    if not state or (country_code or "").upper() != "US":
+        return state or ""
+    if len(state) == 2:
+        return state.upper()
+    return _US_STATE_CODES.get(state.strip().lower(), state)
+
+
+_US_STATE_CODES = {
+    "alabama": "AL", "alaska": "AK", "arizona": "AZ", "arkansas": "AR", "california": "CA",
+    "colorado": "CO", "connecticut": "CT", "delaware": "DE", "florida": "FL", "georgia": "GA",
+    "hawaii": "HI", "idaho": "ID", "illinois": "IL", "indiana": "IN", "iowa": "IA",
+    "kansas": "KS", "kentucky": "KY", "louisiana": "LA", "maine": "ME", "maryland": "MD",
+    "massachusetts": "MA", "michigan": "MI", "minnesota": "MN", "mississippi": "MS",
+    "missouri": "MO", "montana": "MT", "nebraska": "NE", "nevada": "NV",
+    "new hampshire": "NH", "new jersey": "NJ", "new mexico": "NM", "new york": "NY",
+    "north carolina": "NC", "north dakota": "ND", "ohio": "OH", "oklahoma": "OK",
+    "oregon": "OR", "pennsylvania": "PA", "rhode island": "RI", "south carolina": "SC",
+    "south dakota": "SD", "tennessee": "TN", "texas": "TX", "utah": "UT", "vermont": "VT",
+    "virginia": "VA", "washington": "WA", "west virginia": "WV", "wisconsin": "WI",
+    "wyoming": "WY", "district of columbia": "DC",
+}
 
 
 def _warehouse_to_fedex(warehouse_name, company):
@@ -190,12 +222,13 @@ def _warehouse_to_fedex(warehouse_name, company):
         frappe.db.get_single_value("FedEx Connector Settings", "fedex_shipper_country")
         or frappe.get_cached_value("Company", company, "country")
     )
+    country_code = frappe.db.get_value("Country", country, "code") or "" if country else ""
     return {
         "contact_name": wh.warehouse_name,
         "phone": wh.phone_no or "",
         "address_line": wh.address_line_1,
         "city": wh.city,
-        "state": wh.state or "",
+        "state": _state_to_fedex_code(wh.state, country_code),
         "postal_code": wh.pin,
-        "country_code": frappe.db.get_value("Country", country, "code") or "" if country else "",
+        "country_code": country_code,
     }
