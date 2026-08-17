@@ -15,10 +15,17 @@ import frappe
 from frappe.utils.file_manager import save_file
 
 from alaiy_os_connector_fedex.fedex.client import FedexClient, FedexAPIError
-from alaiy_os_connector_fedex.fedex.rating import _erpnext_address_to_fedex, _warehouse_to_fedex, _weight_uom_to_fedex
+from alaiy_os_connector_fedex.fedex.rating import (
+    _erpnext_address_to_fedex, _resolve_shipper_warehouse, _warehouse_to_fedex, _weight_uom_to_fedex,
+)
 
 SHIPMENTS_PATH = "/ship/v1/shipments"
 CANCEL_PATH = "/ship/v1/shipments/cancel"
+# Confirmed against the real FedEx REST SDK generated from FedEx's own
+# OpenAPI models (github.com/ShipStream/fedex-rest-php-sdk, ShipV1/Requests/
+# ShipmentPackageValidate.php) -- not in the permissive local spec this
+# module's docstring already flags as incomplete.
+VALIDATE_PATH = "/ship/v1/shipments/packages/validate"
 
 # Default label format: PDF on standard half-page stock, usable without a
 # thermal printer. Override via Settings for sites that have one.
@@ -34,6 +41,33 @@ def _account_number():
     return account_number, settings
 
 
+def _package_line_item(weight_value, weight_units, dimensions=None, reference=None):
+    dims = dimensions or {}
+    item = {"weight": {"value": weight_value, "units": weight_units}}
+    if dims.get("length") and dims.get("width") and dims.get("height"):
+        item["dimensions"] = {
+            "length": dims["length"], "width": dims["width"], "height": dims["height"],
+            "units": dims.get("units", "IN"),
+        }
+    if reference:
+        item["customerReferences"] = [
+            {"customerReferenceType": "CUSTOMER_REFERENCE", "value": str(reference)[:40]}
+        ]
+    return item
+
+
+def _requested_shipment(shipper, recipient, service_type, package_item, packaging_type):
+    return {
+        "shipper": _contact_address_payload(shipper),
+        "recipients": [_contact_address_payload(recipient)],
+        "pickupType": "DROPOFF_AT_FEDEX_LOCATION",
+        "serviceType": service_type,
+        "packagingType": packaging_type,
+        "shippingChargesPayment": {"paymentType": "SENDER"},
+        "requestedPackageLineItems": [package_item],
+    }
+
+
 def create_shipment(
     shipper, recipient, service_type, weight_value, weight_units="LB",
     packaging_type="YOUR_PACKAGING", dimensions=None, reference=None,
@@ -46,40 +80,64 @@ def create_shipment(
     Raises FedexAPIError on any FedEx-side failure.
     """
     account_number, _settings = _account_number()
-
-    dims = dimensions or {}
-    package_item = {"weight": {"value": weight_value, "units": weight_units}}
-    if dims.get("length") and dims.get("width") and dims.get("height"):
-        package_item["dimensions"] = {
-            "length": dims["length"], "width": dims["width"], "height": dims["height"],
-            "units": dims.get("units", "IN"),
-        }
-    if reference:
-        package_item["customerReferences"] = [
-            {"customerReferenceType": "CUSTOMER_REFERENCE", "value": str(reference)[:40]}
-        ]
+    package_item = _package_line_item(weight_value, weight_units, dimensions, reference)
+    requested_shipment = _requested_shipment(shipper, recipient, service_type, package_item, packaging_type)
+    requested_shipment["labelSpecification"] = {
+        "imageType": _DEFAULT_LABEL_IMAGE_TYPE,
+        "labelStockType": _DEFAULT_LABEL_STOCK_TYPE,
+    }
 
     body = {
         "accountNumber": {"value": account_number},
         "labelResponseOptions": "LABEL",
-        "requestedShipment": {
-            "shipper": _contact_address_payload(shipper),
-            "recipients": [_contact_address_payload(recipient)],
-            "pickupType": "DROPOFF_AT_FEDEX_LOCATION",
-            "serviceType": service_type,
-            "packagingType": packaging_type,
-            "shippingChargesPayment": {"paymentType": "SENDER"},
-            "labelSpecification": {
-                "imageType": _DEFAULT_LABEL_IMAGE_TYPE,
-                "labelStockType": _DEFAULT_LABEL_STOCK_TYPE,
-            },
-            "requestedPackageLineItems": [package_item],
-        },
+        "requestedShipment": requested_shipment,
     }
 
     client = FedexClient()
     resp = client.post(SHIPMENTS_PATH, json=body)
     return _parse_shipment_response(resp)
+
+
+def validate_shipment(
+    shipper, recipient, service_type, weight_value, weight_units="LB",
+    packaging_type="YOUR_PACKAGING", dimensions=None,
+):
+    """Dry-run a shipment before booking -- no label generated, single-piece
+    only, does not validate the street address (per fedex.md; use
+    address_validation.py separately for that). Real endpoint confirmed
+    against FedEx's own OpenAPI-generated REST SDK, not the incomplete
+    local spec.
+
+    Returns {is_valid, alerts, raw}. A validation problem (bad service/
+    packaging combo, missing required field) comes back as a real FedEx
+    error via FedexAPIError, same as create_shipment -- this is a
+    pre-booking check, not a tolerant probe.
+    """
+    account_number, _settings = _account_number()
+    package_item = _package_line_item(weight_value, weight_units, dimensions)
+    requested_shipment = _requested_shipment(shipper, recipient, service_type, package_item, packaging_type)
+    # Confirmed live: required even for a dry-run with no label ever
+    # generated, contrary to fedex.md's "same as Create minus
+    # processingOptions/requestType" summary -- FedEx rejected the request
+    # with REQUESTEDSHIPMENT.LABELSPECIFICATION.REQUIRED without it.
+    requested_shipment["labelSpecification"] = {
+        "imageType": _DEFAULT_LABEL_IMAGE_TYPE,
+        "labelStockType": _DEFAULT_LABEL_STOCK_TYPE,
+    }
+
+    body = {
+        "accountNumber": {"value": account_number},
+        "requestedShipment": requested_shipment,
+    }
+
+    client = FedexClient()
+    resp = client.post(VALIDATE_PATH, json=body)
+    output = resp.get("output") or {}
+    return {
+        "is_valid": not bool(output.get("errors")),
+        "alerts": output.get("alerts") or [],
+        "raw": output,
+    }
 
 
 def _contact_address_payload(party):
@@ -148,9 +206,7 @@ def create_shipment_for_delivery_note(delivery_note, service_type):
         )
 
     settings = frappe.get_single("FedEx Connector Settings")
-    warehouse_name = settings.fedex_default_warehouse
-    if not warehouse_name:
-        frappe.throw("Set a Default Warehouse on FedEx Connector Settings before creating a shipment.")
+    warehouse_name = _resolve_shipper_warehouse(dn, settings)
     shipper = _warehouse_to_fedex(warehouse_name, dn.company)
     shipper["company_name"] = settings.fedex_company or ""
 
