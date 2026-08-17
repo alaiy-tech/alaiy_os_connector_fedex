@@ -19,8 +19,9 @@ orders that already exist elsewhere in Alaiy OS.
 | Shipment Visibility Webhook | Skeleton built, disabled |
 | Pickup | Not built |
 
-Full documentation for every API — request/response bodies, function
-signatures, settings, known field-shape gaps — is in [`docs/`](docs/README.md).
+Full documentation — what it does, setup, architecture, and one page per
+API (request/response bodies, function signatures, settings, known
+field-shape gaps) — is in [`docs/`](docs/index.md).
 
 ## Auth
 

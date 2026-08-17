@@ -120,16 +120,43 @@ Whitelisted entry point for a "Get FedEx Rates" button on a Delivery
 Note. Resolves everything from real ERPNext data instead of requiring
 re-entry:
 
-- **Shipper** — `FedEx Connector Settings.fedex_default_warehouse`'s
-  Address. Throws if not set.
+- **Shipper** — `FedEx Connector Settings.fedex_default_warehouse`, a
+  **Warehouse** (not an Address doctype — see `_warehouse_to_fedex()`
+  below). Throws if not set, or if the warehouse has no
+  `address_line_1`/`city`/`pin`.
 - **Recipient** — the DN's `shipping_address_name`, falling back to
   `customer_address`. Throws if neither is set.
 - **Weight** — the DN's `total_net_weight`. Throws if zero/unset.
-- **Weight units** — the DN's `weight_uom`, mapped via
-  `_weight_uom_to_fedex()`.
+- **Weight units** — the first Delivery Note item row that has a
+  `weight_uom` set (the field lives per line item, not on the DN header),
+  mapped via `_weight_uom_to_fedex()`.
 
 Wraps `FedexAPIError` into `frappe.throw()` so the button shows a real
 user-facing message instead of a stack trace.
+
+### `_warehouse_to_fedex(warehouse_name, company) -> dict`
+
+Shared with `shipping.py`. Reads the **Warehouse** doctype's own flat
+address fields (`address_line_1`, `city`, `state`, `pin`, `phone_no`) —
+`fedex_default_warehouse` is a Link to Warehouse, not Address; passing it
+into `_erpnext_address_to_fedex()` raises "Address ... not found" outright.
+Throws if the warehouse has no address set.
+
+Country resolution prefers `Settings.fedex_shipper_country`; falls back to
+the Company's registered country only if that's unset. Confirmed live
+that defaulting to the Company's country unconditionally is wrong
+whenever the warehouse ships from a different country — FedEx rejects
+that with `ORIGIN.COUNTRY.NOTSERVED`.
+
+### `_state_to_fedex_code(state, country_code) -> str`
+
+Shared with `shipping.py`. FedEx's `stateOrProvinceCode` needs a 2-letter
+code; ERPNext's Address/Warehouse state fields store whatever free-text
+name a Country's state list uses (e.g. `"Tennessee"`) — confirmed live via
+`SHIPPER.STATEORPROVINCECODE.INVALID` when passed through unconverted.
+Only US states are mapped (`_US_STATE_CODES`, a fixed 50-state + DC
+lookup) since that's the confirmed failure case; any other country's
+state/province passes through unchanged.
 
 ### `_weight_uom_to_fedex(weight_uom) -> "LB" | "KG"`
 
@@ -141,14 +168,18 @@ treating grams as pounds) is worse than failing loudly.
 
 ### `_erpnext_address_to_fedex(address_name) -> dict`
 
-Shared with `address_validation.py` and `shipping.py`. Reads an ERPNext
-`Address` doc and maps `address_line1/city/state/pincode/country` to
-FedEx's field names, resolving `country` to its ISO 2-letter code via
-`Country.code`.
+Shared with `shipping.py` (not `address_validation.py` — that module reads
+the Address doc's fields directly, without going through this helper or
+its state-code conversion). Reads an ERPNext `Address` doc and maps
+`address_line1/city/state/pincode/country/phone` to FedEx's field names,
+resolving `country` to its ISO 2-letter code via `Country.code` and
+`state` through `_state_to_fedex_code()`.
 
 ## Settings required
 
 | Field | Doctype | Required for |
 |---|---|---|
 | `fedex_account_number` | FedEx Connector Settings | Every Rate call |
-| `fedex_default_warehouse` | FedEx Connector Settings | The button entry point's shipper resolution |
+| `fedex_default_warehouse` | FedEx Connector Settings | The button entry point's shipper resolution (a Warehouse, not an Address) |
+| `fedex_shipper_country` | FedEx Connector Settings | Preferred source of the shipper's country; falls back to the DN's Company's country if unset |
+| `fedex_company` | FedEx Connector Settings | Shipper's `company_name` on the rate request |
