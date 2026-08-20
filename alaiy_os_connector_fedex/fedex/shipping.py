@@ -184,9 +184,12 @@ def _parse_shipment_response(resp):
 
 
 def cancel_shipment(tracking_number):
+    # FedEx's cancel endpoint is PUT, not POST -- confirmed live via
+    # METHOD.NOT.ALLOWED.ERROR (this module's own docstring already said
+    # PUT, the call just never matched it).
     account_number, _settings = _account_number()
     client = FedexClient()
-    client.post(CANCEL_PATH, json={
+    client.put(CANCEL_PATH, json={
         "accountNumber": {"value": account_number},
         "trackingNumber": tracking_number,
     })
