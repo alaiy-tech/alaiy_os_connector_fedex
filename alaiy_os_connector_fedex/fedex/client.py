@@ -162,3 +162,6 @@ class FedexClient:
 
     def post(self, path, json=None, timeout=30):
         return self._request("POST", path, json=json, timeout=timeout)
+
+    def put(self, path, json=None, timeout=30):
+        return self._request("PUT", path, json=json, timeout=timeout)
