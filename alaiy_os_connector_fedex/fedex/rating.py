@@ -150,15 +150,40 @@ def _weight_uom_to_fedex(weight_uom):
     )
 
 
+# ERPNext's Address.state is free text -- Frappe's own address forms let
+# users type the full state name ("Georgia") instead of the 2-letter code
+# FedEx requires ("GA"). Confirmed live: FedEx rejected a real shipment
+# with RECIPIENTS.ADDRESSSTATEORPROVINCECODE.MISMATCH for exactly this
+# reason, for a perfectly valid Georgia zip code. pycountry (already a
+# frappe core dependency -- see frappe/geo/doctype/country/country.py)
+# has the real ISO 3166-2 subdivision data, no need to hand-maintain one.
+def _normalize_state(state, country_code):
+    if not state or len(state) == 2:
+        return state or ""
+    import pycountry
+
+    try:
+        match = pycountry.subdivisions.lookup(f"{country_code}-{state}")
+    except LookupError:
+        match = next(
+            (s for s in pycountry.subdivisions.get(country_code=country_code) or []
+             if s.name.lower() == state.strip().lower()),
+            None,
+        )
+    return match.code.split("-")[-1] if match else state
+
+
 def _erpnext_address_to_fedex(address_name):
     addr = frappe.get_doc("Address", address_name)
+    country_code = frappe.db.get_value("Country", addr.country, "code") or ""
+    country_code = country_code.upper()
     return {
         "phone": addr.phone or "",
         "address_line": addr.address_line1,
         "city": addr.city,
-        "state": addr.state,
+        "state": _normalize_state(addr.state, country_code),
         "postal_code": addr.pincode,
-        "country_code": frappe.db.get_value("Country", addr.country, "code") or "",
+        "country_code": country_code,
     }
 
 
