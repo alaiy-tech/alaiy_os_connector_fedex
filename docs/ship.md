@@ -111,15 +111,27 @@ Delivery Note. Resolves everything from real ERPNext data:
 - **Refuses to run if the DN already has a `fedex_tracking_number`** —
   throws telling the user to cancel the existing shipment first. Prevents
   accidentally double-shipping the same DN.
-- **Shipper** — `FedEx Connector Settings.fedex_default_warehouse`'s
-  Address, with `company_name` from `Settings.fedex_company`. Throws if
-  the warehouse isn't set.
+- **Shipper** — `FedEx Connector Settings.fedex_default_warehouse`, a
+  **Warehouse** (not an Address doctype), resolved via `rating.py`'s
+  `_warehouse_to_fedex()` — reads the Warehouse's own
+  `address_line_1`/`city`/`state`/`pin`/`phone_no` fields, converts `state`
+  to a 2-letter code for US addresses, and resolves country from
+  `Settings.fedex_shipper_country` (falling back to the Company's
+  country). `company_name` comes from `Settings.fedex_company`. Throws if
+  the warehouse isn't set or has no address fields filled in.
 - **Recipient** — DN's `shipping_address_name` (falling back to
-  `customer_address`), with `contact_name` from `dn.contact_person` or
-  `dn.customer_name`, and `company_name` from `dn.customer_name`. Throws
-  if no shipping address exists.
-- **Weight** — DN's `total_net_weight` + `weight_uom` (via
-  `rating.py`'s `_weight_uom_to_fedex`). Throws if zero/unset.
+  `customer_address`), resolved via `rating.py`'s
+  `_erpnext_address_to_fedex()` (includes the Address doc's `phone`, and
+  the same US state-code conversion), with `contact_name` from
+  `dn.contact_person` or `dn.customer_name`, and `company_name` from
+  `dn.customer_name`. Throws if no shipping address exists.
+- **Weight** — DN's `total_net_weight`, plus the first Delivery Note item
+  row that has a `weight_uom` set (the unit lives per line item, not on
+  the DN header — confirmed live via `'DeliveryNote' object has no
+  attribute 'weight_uom'`), mapped via `rating.py`'s
+  `_weight_uom_to_fedex()`. Throws if the weight is zero/unset. A DN
+  mixing weight UOMs across rows is not corrected for — `total_net_weight`
+  is ERPNext core's own rollup and doesn't convert between units either.
 - Passes `dn.name` as the shipment `reference`.
 
 On success:
@@ -130,10 +142,26 @@ On success:
    `frappe.utils.file_manager.save_file`, and writes the file's URL onto
    the new `fedex_label` (Attach field) custom field.
 3. Commits.
+4. Pushes the tracking number to the linked Shopify order (see
+   "Tracking number → Shopify" below).
 
 Returns `{"tracking_number": "..."}`. A `FedexAPIError` from
 `create_shipment()` is caught and re-raised via `frappe.throw()` — a
 real user-facing message, not a stack trace.
+
+### Tracking number → Shopify
+
+`_push_tracking_to_shopify(delivery_note, tracking_number)` runs
+automatically at the end of `create_shipment_for_delivery_note` — no
+separate trigger needed. If the `alaiy_os_connector_shopify` app isn't in
+`frappe.get_installed_apps()`, it's a no-op. Otherwise it calls that
+connector's
+`shopify.order.fulfillment_push.push_fulfillment_for_delivery_note(delivery_note, tracking_number, carrier="FedEx")`.
+This is a best-effort push: the FedEx shipment and its tracking number are
+already committed to the Delivery Note by this point, so any failure here
+(order not linked to Shopify, Shopify API error) is caught and only
+`frappe.log_error`'d — it never rolls back or fails the shipment creation
+that already succeeded.
 
 ## Fields written
 
@@ -163,13 +191,17 @@ On **Delivery Note**:
   caught earlier.
 - No UI entry point for `cancel_shipment` yet.
 - No Pickup API integration — `pickupType` is always drop-off.
-- **No push of the generated tracking number to Shopify.** The Shopify
-  connector (`alaiy_os_connector_shopify`) syncs fulfillment tracking
-  numbers in the *inbound* direction only — Shopify's own tracking data
-  into Alaiy OS. It has no matching outbound path to push a tracking
-  number generated here (via `fedex_tracking_number`) back onto the
-  corresponding Shopify order's fulfillment. A caller wanting the
-  Shopify order marked shipped/tracked after calling
-  `create_shipment_for_delivery_note` needs to write that push
-  separately — nothing in this connector or the Shopify connector does
-  it today.
+
+## Known limitation: not confirmed against a real shipment
+
+Unlike Rate (`totalNetCharge`'s real shape, and the warehouse/state-code
+fixes above, are explicitly marked "confirmed live" in the code) and
+Address Validation (whose docs distinguish real sandbox geocoding
+behavior from production), nothing in `shipping.py`'s `create_shipment` /
+`create_shipment_for_delivery_note` carries a "confirmed live" comment.
+The request/response shapes here are still the ones derived from FedEx's
+stable v1 field conventions (see the module docstring's "same
+permissive-schema caveat as rating.py" note), not verified against an
+actual booked shipment. Treat Ship as built-and-believed-correct, not
+built-and-proven, until it's exercised against a real (or at least a real
+sandbox) shipment end to end.
