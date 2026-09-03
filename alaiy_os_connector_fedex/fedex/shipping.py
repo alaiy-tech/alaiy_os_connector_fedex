@@ -258,6 +258,51 @@ def create_shipment_for_delivery_note(delivery_note, service_type):
     return {"tracking_number": result["tracking_number"]}
 
 
+def cancel_shipment_for_delivery_note(doc, method=None):
+    """Cancel the FedEx shipment behind a Delivery Note being cancelled.
+
+    A cancelled Delivery Note means the goods are not going out, but the FedEx
+    label stays live until FedEx is told otherwise: the account is billed for
+    it, and the parcel can still physically move on a label nobody intends to
+    use. Nothing cancelled it before, in any app -- this connector registered
+    no doc_events at all, so a label outlived every document that referenced
+    it.
+
+    Best-effort by design, and deliberately never raises. The Delivery Note
+    cancel is the caller's real intent and is already committing; a FedEx-side
+    failure (already cancelled, past the cancellable window, credentials
+    rejected, API down) must not block it or roll it back. It is logged loudly
+    instead, because an uncancelled label costs real money and needs a human.
+
+    Registered on Delivery Note on_cancel.
+    """
+    tracking_number = getattr(doc, "fedex_tracking_number", None)
+    if not tracking_number:
+        return
+    # A site with no FedEx account configured cannot have created this label,
+    # so there is nothing to cancel and nothing worth logging -- without this
+    # every Delivery Note cancel on such a site would raise an error entry.
+    if not (frappe.db.get_single_value("FedEx Connector Settings", "fedex_account_number") or "").strip():
+        return
+    try:
+        cancel_shipment(tracking_number)
+    except Exception:
+        frappe.log_error(
+            title=f"FedEx shipment {tracking_number} still live after {doc.name} was cancelled",
+            message=(
+                f"{doc.name} has been cancelled, but its FedEx shipment could not "
+                f"be cancelled with FedEx. The label is still valid: the account "
+                f"may be billed for it and the parcel could still be scanned and "
+                f"moved.\n\nCancel tracking {tracking_number} directly with "
+                f"FedEx.\n\n{frappe.get_traceback()}"
+            ),
+        )
+        return
+    frappe.logger().info(
+        f"FedEx shipment {tracking_number} cancelled with {doc.name}."
+    )
+
+
 def _push_tracking_to_shopify(delivery_note, tracking_number):
     """
     Best-effort push -- the FedEx shipment and its tracking number are
