@@ -56,15 +56,20 @@ scheduler_events = {
 # ---------------------------------------------------------------------------
 # Document events (examples — wire up the ones your connector needs)
 # ---------------------------------------------------------------------------
-# doc_events = {
-# 	"Item": {
-# 		"after_insert": "alaiy_os_connector_fedex.fedex.sync.on_item_change",
-# 		"on_update": "alaiy_os_connector_fedex.fedex.sync.on_item_change",
-# 	},
-# 	"Sales Order": {
-# 		"on_submit": "alaiy_os_connector_fedex.fedex.sync.on_sales_order_submit",
-# 	},
-# }
+doc_events = {
+    "Delivery Note": {
+        # A cancelled Delivery Note means the goods are not going out, but the
+        # FedEx label stays live until FedEx is told otherwise -- the account
+        # is billed for it and the parcel can still be scanned and moved.
+        # Nothing cancelled it before: this app registered no doc_events at
+        # all, so a label outlived every document that referenced it.
+        #
+        # Best-effort and never raises: the Delivery Note cancel is the real
+        # intent and must not be blocked by a FedEx-side failure. An
+        # uncancelled label is logged loudly instead, since it costs money.
+        "on_cancel": "alaiy_os_connector_fedex.fedex.shipping.cancel_shipment_for_delivery_note",
+    },
+}
 
 # List-view client scripts for ERPNext doctypes (examples)
 # doctype_list_js = {
