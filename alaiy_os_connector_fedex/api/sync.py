@@ -37,8 +37,8 @@ def refresh_delivery_note_tracking(delivery_note):
 
 @frappe.whitelist()
 def trigger_pull_sync():
-    """Manually enqueue a 'pull' sync (poll FedEx tracking for every tracked Delivery Note)."""
-    log = get_or_create_log("pull", "manual")
+    """Manually enqueue a tracking sync (poll FedEx tracking for every tracked Delivery Note)."""
+    log = get_or_create_log("track_pull", "manual")
     frappe.enqueue(
         "alaiy_os_connector_fedex.fedex.sync.run_pull_sync",
         queue="long",
@@ -73,7 +73,7 @@ def get_sync_status(sync_type=None):
     """
     filters = {}
     if sync_type:
-        type_map = {"categories": "pull", "items": "push"}
+        type_map = {"categories": "track_pull", "items": "push"}
         filters["sync_type"] = type_map.get(sync_type, sync_type)
     return frappe.get_all(
         "FedEx Sync Log",
