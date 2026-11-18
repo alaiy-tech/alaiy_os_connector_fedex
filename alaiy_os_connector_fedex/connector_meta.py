@@ -26,4 +26,24 @@ connector_meta = {
     "sync_items_label": "Ship (not implemented)",
     "is_enabled": 0,
     "connection_status": "untested",
+    "health": [
+        {
+            "key": "tracking",
+            "label": "Shipment tracking",
+            "direction": "pull",
+            "log_doctype": "FedEx Sync Log",
+            # Webhook notifications are logged under the same sync type; they are not poll runs.
+            "log_filter": {"sync_type": "track_pull", "trigger": ["!=", "webhook"]},
+            "fields": {
+                "processed": "items_processed",
+                "changed": "items_updated",
+                "failed": "items_failed",
+                "error": "error_message",
+            },
+            "interval_setting": "fedex_pull_sync_interval",
+            "scheduled": True,
+            # There may be no open shipments to track.
+            "expects_rows": False,
+        },
+    ],
 }
