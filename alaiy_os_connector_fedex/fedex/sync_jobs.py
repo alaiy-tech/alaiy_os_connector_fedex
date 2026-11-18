@@ -31,7 +31,8 @@ def check_and_enqueue():
 
     _maybe_enqueue(
         interval_setting=settings.fedex_pull_sync_interval or "Disabled",
-        sync_type="pull",
+        # The tracking job logs its runs as "track_pull"; the schedule must read the same rows.
+        sync_type="track_pull",
         enqueue_fn="alaiy_os_connector_fedex.fedex.sync.run_pull_sync",
     )
     _maybe_enqueue(
@@ -51,7 +52,7 @@ def _maybe_enqueue(interval_setting, sync_type, enqueue_fn):
     # Skip if a (non-stale) job is already running for this sync type.
     running = frappe.db.get_value(
         "FedEx Sync Log",
-        {"sync_type": sync_type, "status": "running"},
+        {"sync_type": sync_type, "status": "running", "trigger": ["!=", "webhook"]},
         "started_at",
         order_by="started_at desc",
     )
@@ -61,7 +62,7 @@ def _maybe_enqueue(interval_setting, sync_type, enqueue_fn):
     # Skip if the last success is still inside the configured interval.
     last_success = frappe.db.get_value(
         "FedEx Sync Log",
-        {"sync_type": sync_type, "status": "success"},
+        {"sync_type": sync_type, "status": "success", "trigger": ["!=", "webhook"]},
         "started_at",
         order_by="started_at desc",
     )
